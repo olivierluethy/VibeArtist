@@ -7,21 +7,24 @@ const EDGE_KERNEL = [
   [-1, -1, -1],
 ];
 
-async function loadJimp(src: string): Promise<Jimp> {
-  const buf = await loadImageBuffer(src);
-  return Jimp.read(buf);
-}
-
 /** Edge-detected line-art (dark lines on light) as a PNG data URL — traceable + shown as the sketch. */
-export async function deriveLineArt(colorSrc: string): Promise<string> {
-  const img = await loadJimp(colorSrc);
+export async function deriveLineArtFromBuffer(buf: Buffer): Promise<string> {
+  const img = await Jimp.read(buf);
   img.grayscale().convolute(EDGE_KERNEL).invert();
   return img.getBase64Async(Jimp.MIME_PNG);
 }
 
 /** Grayscale portrait as a PNG data URL — used during the shade phase. */
-export async function deriveShading(colorSrc: string): Promise<string> {
-  const img = await loadJimp(colorSrc);
+export async function deriveShadingFromBuffer(buf: Buffer): Promise<string> {
+  const img = await Jimp.read(buf);
   img.grayscale();
   return img.getBase64Async(Jimp.MIME_PNG);
+}
+
+export async function deriveLineArt(colorSrc: string): Promise<string> {
+  return deriveLineArtFromBuffer(await loadImageBuffer(colorSrc));
+}
+
+export async function deriveShading(colorSrc: string): Promise<string> {
+  return deriveShadingFromBuffer(await loadImageBuffer(colorSrc));
 }
