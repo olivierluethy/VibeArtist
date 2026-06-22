@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #f4efe6;
+  --wood: #6b4f2e;
+  --gold: #e8c46a;
+  --backdrop: #14110d;
+}
+
+body {
+  background: radial-gradient(circle at 50% 20%, #241f18, var(--backdrop));
+  color: #f4efe6;
+  min-height: 100vh;
+}
