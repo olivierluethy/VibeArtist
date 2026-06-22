@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { INITIAL_STATE, nextStep, type AppState } from '@/lib/flow';
 import { WORLD_CUP_FIXTURE } from '@/lib/drawing/fixtures';
 import EaselScreen from '@/components/EaselScreen';
+import InputStep from '@/components/InputStep';
 
 export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -21,11 +22,7 @@ export default function Home() {
       )}
 
       {state.step === 'input' && (
-        <section className="space-y-6">
-          <h2 className="text-2xl">Your photo</h2>
-          <p className="opacity-60">(placeholder — camera/upload arrives in Task 6)</p>
-          <button className="btn-gold" onClick={() => advance({ photo: 'placeholder' })}>Use sample photo</button>
-        </section>
+        <InputStep onPhoto={(photo) => advance({ photo })} />
       )}
 
       {state.step === 'vibe' && (
