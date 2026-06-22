@@ -56,7 +56,12 @@ export default function InputStep({ onPhoto }: { onPhoto: (dataUrl: string) => v
       canvas.width = img.width;
       canvas.height = img.height;
       canvas.getContext('2d')?.drawImage(img, 0, 0);
+      URL.revokeObjectURL(img.src);
       emitFromCanvas(canvas);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      setError('Could not read image — try another file.');
     };
     img.src = URL.createObjectURL(file);
   }
