@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { INITIAL_STATE, nextStep, type AppState } from '@/lib/flow';
+import { isKiosk, IDLE_RESET_MS } from '@/lib/kiosk';
 import type { DrawingPlan } from '@/lib/drawing/types';
 import EaselScreen from '@/components/EaselScreen';
 import InputStep from '@/components/InputStep';
@@ -12,6 +13,13 @@ export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const advance = (patch: Partial<AppState> = {}) =>
     setState((s) => ({ ...s, ...patch, step: nextStep(s.step) }));
+
+  useEffect(() => {
+    if (state.step !== 'result') return;
+    if (typeof window === 'undefined' || !isKiosk(window.location.search)) return;
+    const id = setTimeout(() => setState(INITIAL_STATE), IDLE_RESET_MS);
+    return () => clearTimeout(id);
+  }, [state.step]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-4 text-center">
