@@ -22,10 +22,20 @@ export default function ResultView({
   async function share() {
     const text = shareText(config);
     if (navigator.share) {
-      try { await navigator.share({ text }); return; } catch { /* user cancelled */ }
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // unexpected error — fall through to clipboard
+      }
     }
-    await navigator.clipboard.writeText(text);
-    alert('Caption copied to clipboard!');
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      alert('Caption copied to clipboard!');
+    } else {
+      alert('Sharing is not supported in this browser.');
+    }
   }
 
   return (
@@ -36,7 +46,7 @@ export default function ResultView({
       </div>
       <div className="flex gap-3">
         <button className="btn-gold" onClick={download}>Download</button>
-        <button className="btn-gold" onClick={share}>Share</button>
+        <button className="btn-gold" onClick={() => { share().catch(console.error); }}>Share</button>
       </div>
       <button className="underline opacity-70" onClick={onRestart}>Draw another</button>
     </div>
