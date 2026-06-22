@@ -5,6 +5,7 @@ import { INITIAL_STATE, nextStep, type AppState } from '@/lib/flow';
 import { WORLD_CUP_FIXTURE } from '@/lib/drawing/fixtures';
 import EaselScreen from '@/components/EaselScreen';
 import InputStep from '@/components/InputStep';
+import VibePicker from '@/components/VibePicker';
 
 export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -26,11 +27,7 @@ export default function Home() {
       )}
 
       {state.step === 'vibe' && (
-        <section className="space-y-6">
-          <h2 className="text-2xl">Pick your team</h2>
-          <p className="opacity-60">(placeholder — vibe picker arrives in Task 7)</p>
-          <button className="btn-gold" onClick={() => advance({ config: { team: 'Brazil' } })}>Brazil</button>
-        </section>
+        <VibePicker onConfirm={(config) => advance({ config })} />
       )}
 
       {state.step === 'preparing' && (
