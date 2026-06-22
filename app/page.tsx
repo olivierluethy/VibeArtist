@@ -72,6 +72,7 @@ function Preparing({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ selfie: photo, team: config.team, player: config.player }),
         });
+        if (!res.ok) throw new Error(`generate failed: ${res.status}`);
         const plan = (await res.json()) as DrawingPlan;
         if (!cancelled) onReady(plan);
       } catch {

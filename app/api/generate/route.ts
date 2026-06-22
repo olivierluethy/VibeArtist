@@ -14,8 +14,13 @@ export async function resolvePlan(
 }
 
 export async function POST(req: Request) {
-  const input = (await req.json()) as PortraitInput;
-  const mock = !process.env.PORTRAIT_API_URL;
-  const plan = await resolvePlan(input, { mock });
-  return NextResponse.json(plan);
+  try {
+    const input = (await req.json()) as PortraitInput;
+    const mock = !process.env.PORTRAIT_API_URL;
+    const plan = await resolvePlan(input, { mock });
+    return NextResponse.json(plan);
+  } catch (err) {
+    console.error('[api/generate] failed', err);
+    return NextResponse.json({ error: 'generation failed' }, { status: 500 });
+  }
 }
