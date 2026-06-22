@@ -4,8 +4,11 @@ import type { StrokePath } from '@/lib/drawing/types';
 
 /** Decode a data URL into a Buffer for potrace. */
 function dataUrlToBuffer(dataUrl: string): Buffer {
-  const base64 = dataUrl.split(',')[1] ?? '';
-  return Buffer.from(base64, 'base64');
+  const comma = dataUrl.indexOf(',');
+  if (comma === -1) {
+    throw new Error(`dataUrlToBuffer: not a data URL: ${dataUrl.slice(0, 40)}`);
+  }
+  return Buffer.from(dataUrl.slice(comma + 1), 'base64');
 }
 
 export function extractPathData(svg: string): string[] {
@@ -20,7 +23,10 @@ export function traceToStrokePaths(pngDataUrl: string): Promise<StrokePath[]> {
     // potrace's callback) when the image is unreadable. Pre-checking here
     // lets us return [] gracefully for degenerate images (e.g. 1×1 test PNG).
     Jimp.read(buf, (jimpErr) => {
-      if (jimpErr) return resolve([]);
+      if (jimpErr) {
+        console.error('[lineart] traceToStrokePaths: Jimp could not decode image, returning []', jimpErr);
+        return resolve([]);
+      }
       trace(buf, { turdSize: 40, threshold: 160 }, (err, svg) => {
         if (err) return reject(err);
         resolve(extractPathData(svg).map((d) => ({ d })));
