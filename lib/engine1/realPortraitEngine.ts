@@ -1,4 +1,5 @@
 import { buildPrompt, type PortraitEngine, type PortraitInput, type PortraitOutput } from './portraitEngine';
+import { pollUntilDone } from './poll';
 
 export class RealPortraitEngine implements PortraitEngine {
   async generate(input: PortraitInput): Promise<PortraitOutput> {
@@ -17,11 +18,25 @@ export class RealPortraitEngine implements PortraitEngine {
     });
 
     if (!res.ok) throw new Error(`Portrait API error: ${res.status}`);
-    const json = (await res.json()) as PortraitOutput;
-    return {
-      colorImage: json.colorImage,
-      width: json.width,
-      height: json.height,
-    };
+    let json = (await res.json()) as any;
+
+    // Provider seam: async APIs return a job to poll. Enable with PORTRAIT_API_POLL=1.
+    if (process.env.PORTRAIT_API_POLL === '1') {
+      json = await pollUntilDone(
+        json,
+        {
+          isDone: (j) => j.status === 'succeeded',
+          isFailed: (j) => j.status === 'failed' || j.status === 'canceled',
+          getPollUrl: (j) => j.pollUrl ?? j.urls?.get,
+          headers: key ? { authorization: `Bearer ${key}` } : undefined,
+          intervalMs: Number(process.env.PORTRAIT_API_POLL_INTERVAL_MS ?? 1500),
+          timeoutMs: Number(process.env.PORTRAIT_API_POLL_TIMEOUT_MS ?? 60000),
+        },
+      );
+    }
+
+    // Provider seam: the result may be the response itself (sync) or nested under `output` (job).
+    const result = json.output ?? json;
+    return { colorImage: result.colorImage, width: result.width, height: result.height };
   }
 }
