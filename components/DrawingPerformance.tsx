@@ -91,7 +91,7 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
         {plan.strokePaths.map((sp, i) => (
           <path
             key={i}
-            ref={(el) => (pathRefs.current[i] = el)}
+            ref={(el) => { pathRefs.current[i] = el; }}
             d={sp.d}
             stroke="#2a2018"
             strokeWidth={2.4}
