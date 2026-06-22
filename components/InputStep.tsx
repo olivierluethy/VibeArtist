@@ -6,10 +6,12 @@ import { isKiosk } from '@/lib/kiosk';
 
 export default function InputStep({ onPhoto }: { onPhoto: (dataUrl: string) => void }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [cameraOn, setCameraOn] = useState(
-    typeof window !== 'undefined' && isKiosk(window.location.search),
-  );
+  const [cameraOn, setCameraOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isKiosk(window.location.search)) setCameraOn(true);
+  }, []);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
