@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { INITIAL_STATE, nextStep, type AppState } from '@/lib/flow';
-import { WORLD_CUP_FIXTURE } from '@/lib/drawing/fixtures';
+import type { DrawingPlan } from '@/lib/drawing/types';
 import EaselScreen from '@/components/EaselScreen';
 import InputStep from '@/components/InputStep';
 import VibePicker from '@/components/VibePicker';
@@ -32,10 +32,11 @@ export default function Home() {
       )}
 
       {state.step === 'preparing' && (
-        <section className="space-y-6">
-          <h2 className="text-2xl">The artist is preparing…</h2>
-          <button className="btn-gold" onClick={() => advance({ plan: WORLD_CUP_FIXTURE })}>Reveal easel</button>
-        </section>
+        <Preparing
+          photo={state.photo!}
+          config={state.config!}
+          onReady={(plan) => advance({ plan })}
+        />
       )}
 
       {state.step === 'performance' && state.plan && (
@@ -50,5 +51,42 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+function Preparing({
+  photo,
+  config,
+  onReady,
+}: {
+  photo: string;
+  config: { team: string; player?: string };
+  onReady: (plan: DrawingPlan) => void;
+}) {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ selfie: photo, team: config.team, player: config.player }),
+        });
+        const plan = (await res.json()) as DrawingPlan;
+        if (!cancelled) onReady(plan);
+      } catch {
+        if (!cancelled) alert('The artist needs a moment — please try again.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [photo, config, onReady]);
+
+  return (
+    <section className="space-y-4">
+      <h2 className="text-2xl">The artist is preparing…</h2>
+      <div className="mx-auto h-2 w-48 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full w-1/3 animate-pulse bg-[var(--gold)]" />
+      </div>
+    </section>
   );
 }
