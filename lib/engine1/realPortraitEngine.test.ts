@@ -29,4 +29,13 @@ describe('RealPortraitEngine', () => {
       /not configured/i,
     );
   });
+
+  it('throws on a non-2xx response', async () => {
+    process.env.PORTRAIT_API_URL = 'https://api.example.com/generate';
+    delete process.env.PORTRAIT_API_KEY;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 422 })));
+    await expect(
+      new RealPortraitEngine().generate({ selfie: 'data:...', team: 'Brazil' }),
+    ).rejects.toThrow(/Portrait API error/i);
+  });
 });
