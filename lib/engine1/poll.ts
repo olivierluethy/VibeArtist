@@ -1,7 +1,7 @@
 export interface PollConfig {
   /** True when the job is finished successfully. */
   isDone: (json: any) => boolean;
-  /** True when the job failed/was cancelled (optional). */
+  /** True when the job failed/was cancelled. Only consulted while isDone is false. */
   isFailed?: (json: any) => boolean;
   /** URL to GET for the next status check, given the latest job json. */
   getPollUrl: (json: any) => string;
@@ -33,7 +33,9 @@ export async function pollUntilDone(
     if (cfg.isFailed?.(current)) throw new Error('Portrait job failed');
     if (now() - start > timeout) throw new Error('Portrait job timed out');
     await sleep(interval);
-    const res = await fetchFn(cfg.getPollUrl(current), cfg.headers ? { headers: cfg.headers } : undefined);
+    const pollUrl = cfg.getPollUrl(current);
+    if (!pollUrl) throw new Error('Portrait poll: no poll URL in job response');
+    const res = await fetchFn(pollUrl, cfg.headers ? { headers: cfg.headers } : undefined);
     if (!res.ok) throw new Error(`Portrait poll error: ${res.status}`);
     current = await res.json();
   }

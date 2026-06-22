@@ -5,6 +5,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.PORTRAIT_API_POLL;
   delete process.env.PORTRAIT_API_POLL_INTERVAL_MS;
+  delete process.env.PORTRAIT_API_POLL_TIMEOUT_MS;
 });
 
 describe('RealPortraitEngine', () => {

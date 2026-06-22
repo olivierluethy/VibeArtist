@@ -1,6 +1,11 @@
 import { buildPrompt, type PortraitEngine, type PortraitInput, type PortraitOutput } from './portraitEngine';
 import { pollUntilDone } from './poll';
 
+function envInt(name: string, fallback: number): number {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
 export class RealPortraitEngine implements PortraitEngine {
   async generate(input: PortraitInput): Promise<PortraitOutput> {
     const url = process.env.PORTRAIT_API_URL;
@@ -29,8 +34,8 @@ export class RealPortraitEngine implements PortraitEngine {
           isFailed: (j) => j.status === 'failed' || j.status === 'canceled',
           getPollUrl: (j) => j.pollUrl ?? j.urls?.get,
           headers: key ? { authorization: `Bearer ${key}` } : undefined,
-          intervalMs: Number(process.env.PORTRAIT_API_POLL_INTERVAL_MS ?? 1500),
-          timeoutMs: Number(process.env.PORTRAIT_API_POLL_TIMEOUT_MS ?? 60000),
+          intervalMs: envInt('PORTRAIT_API_POLL_INTERVAL_MS', 1500),
+          timeoutMs: envInt('PORTRAIT_API_POLL_TIMEOUT_MS', 60000),
         },
       );
     }
