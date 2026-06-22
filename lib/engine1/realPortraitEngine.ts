@@ -20,7 +20,6 @@ export class RealPortraitEngine implements PortraitEngine {
     const json = (await res.json()) as PortraitOutput;
     return {
       colorImage: json.colorImage,
-      lineArtImage: json.lineArtImage,
       width: json.width,
       height: json.height,
     };

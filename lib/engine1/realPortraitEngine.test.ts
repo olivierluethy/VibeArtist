@@ -9,7 +9,7 @@ describe('RealPortraitEngine', () => {
     process.env.PORTRAIT_API_KEY = 'secret';
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({ colorImage: 'c.png', lineArtImage: 'l.png', width: 400, height: 500 }),
+        JSON.stringify({ colorImage: 'c.png', width: 400, height: 500 }),
         { status: 200 },
       ),
     );

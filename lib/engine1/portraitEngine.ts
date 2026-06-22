@@ -6,7 +6,6 @@ export interface PortraitInput {
 
 export interface PortraitOutput {
   colorImage: string;   // finished color portrait (URL or data URI)
-  lineArtImage: string; // line-art / sketch version (URL or data URI)
   width: number;
   height: number;
 }

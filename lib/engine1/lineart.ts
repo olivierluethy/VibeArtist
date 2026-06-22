@@ -1,19 +1,7 @@
 import { trace } from 'potrace';
 import Jimp from 'jimp';
 import type { StrokePath } from '@/lib/drawing/types';
-
-async function loadImageBuffer(src: string): Promise<Buffer> {
-  if (src.startsWith('data:')) {
-    const comma = src.indexOf(',');
-    if (comma === -1) {
-      throw new Error(`loadImageBuffer: not a data URL: ${src.slice(0, 40)}`);
-    }
-    return Buffer.from(src.slice(comma + 1), 'base64');
-  }
-  const res = await fetch(src);
-  if (!res.ok) throw new Error(`loadImageBuffer: failed to fetch line-art (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
-}
+import { loadImageBuffer } from './imageSource';
 
 export function extractPathData(svg: string): string[] {
   const matches = svg.matchAll(/<path[^>]*\sd="([^"]+)"/g);

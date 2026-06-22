@@ -3,7 +3,7 @@ import { generateDrawingPlan } from './generationService';
 import { RealPortraitEngine } from './realPortraitEngine';
 
 // A small valid PNG (black shapes on white) so potrace traces real paths.
-const LINEART_PNG_B64 =
+const SAMPLE_PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAwklEQVR4Ae3BgWkEQQDEMO9w/be8SQ3xBR7e0rm/yJ+NKCPKiDKijCgjyogyoowoI8qIMqKMKCPKg3DO4ZPde/lvI8qIMqKMKCPKiDKijCgjyogyoowoI8qIMqKMKCPKiDKijCgjyogyoowoI8qIMqKMKCPKg3Dv5duNKCPKiDKijCgjyogyoowoDy875/DJ7r28aUQZUUaUEWVEGVFGlBFlRHl42b2XbzKijCgjyogyoowoI8qIMqKMKCPKiDKijCg/xkUQnmgvYDQAAAAASUVORK5CYII=';
 
 afterEach(() => {
@@ -12,27 +12,27 @@ afterEach(() => {
   delete process.env.PORTRAIT_API_KEY;
 });
 
-describe('real-mode pipeline (provider returns line-art as a URL)', () => {
-  it('fetches the URL line-art, traces it, and returns a plan with real stroke paths', async () => {
+describe('real-mode pipeline (provider returns one portrait, line-art + shading derived locally)', () => {
+  it('fetches the portrait URL, derives line-art and shading locally, returns a plan with real stroke paths', async () => {
     process.env.PORTRAIT_API_URL = 'https://provider.example/generate';
     process.env.PORTRAIT_API_KEY = 'test-key';
-    const pngBytes = Buffer.from(LINEART_PNG_B64, 'base64');
+    const pngBytes = Buffer.from(SAMPLE_PNG_B64, 'base64');
 
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       if (u === 'https://provider.example/generate') {
-        // The image provider responds with REMOTE URLs (the realistic case).
+        // The image provider responds with a single portrait URL (one-image contract).
         return new Response(
           JSON.stringify({
             colorImage: 'https://cdn.example/portrait.png',
-            lineArtImage: 'https://cdn.example/lineart.png',
             width: 80,
             height: 80,
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
       }
-      if (u === 'https://cdn.example/lineart.png') {
+      if (u === 'https://cdn.example/portrait.png') {
+        // Fetched multiple times: once for line-art derivation, once for shading derivation.
         return new Response(pngBytes, { status: 200 });
       }
       throw new Error(`unexpected fetch: ${u}`);
@@ -44,13 +44,17 @@ describe('real-mode pipeline (provider returns line-art as a URL)', () => {
       new RealPortraitEngine(),
     );
 
-    // Both hops happened: the provider was called, then the line-art URL was fetched.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    // The URL-delivered line-art was actually decoded and traced into real strokes.
+    // The provider was POSTed and the portrait URL was fetched (for derive).
+    const fetchedUrls = fetchMock.mock.calls.map(([u]: [unknown]) => String(u));
+    expect(fetchedUrls).toContain('https://provider.example/generate');
+    expect(fetchedUrls).toContain('https://cdn.example/portrait.png');
+
+    // Line-art derived locally and traced into real strokes.
     expect(plan.strokePaths.length).toBeGreaterThan(0);
-    // The plan carries the provider's images and the standard pacing.
+
+    // Plan carries the provider's color image and the standard pacing.
     expect(plan.colorImage).toBe('https://cdn.example/portrait.png');
-    expect(plan.shadingLayer).toBe('https://cdn.example/lineart.png');
+    expect(plan.shadingLayer).toMatch(/^data:image\/png/);
     expect(plan.width).toBe(80);
     expect(plan.height).toBe(80);
     expect(plan.timing.accelerate).toBe(true);
