@@ -4,6 +4,22 @@ import { useEffect, useRef, useState } from 'react';
 import { hasFace } from '@/lib/face';
 import { isKiosk } from '@/lib/kiosk';
 
+const MAX_DIM = 1024;
+function drawScaled(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+): HTMLCanvasElement {
+  const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d')?.drawImage(source, 0, 0, w, h);
+  return canvas;
+}
+
 export default function InputStep({ onPhoto }: { onPhoto: (dataUrl: string) => void }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
@@ -45,10 +61,7 @@ export default function InputStep({ onPhoto }: { onPhoto: (dataUrl: string) => v
   function capture() {
     const video = videoRef.current;
     if (!video) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    const canvas = drawScaled(video, video.videoWidth, video.videoHeight);
     emitFromCanvas(canvas);
   }
 
@@ -57,10 +70,7 @@ export default function InputStep({ onPhoto }: { onPhoto: (dataUrl: string) => v
     if (!file) return;
     const img = new Image();
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      canvas.getContext('2d')?.drawImage(img, 0, 0);
+      const canvas = drawScaled(img, img.width, img.height);
       URL.revokeObjectURL(img.src);
       emitFromCanvas(canvas);
     };

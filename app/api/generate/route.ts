@@ -5,6 +5,8 @@ import { generateDrawingPlan } from '@/lib/engine1/generationService';
 import type { PortraitInput } from '@/lib/engine1/portraitEngine';
 import { RealPortraitEngine } from '@/lib/engine1/realPortraitEngine';
 
+export const runtime = 'nodejs';
+
 export async function resolvePlan(
   input: PortraitInput,
   opts: { mock: boolean },
