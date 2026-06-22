@@ -6,6 +6,7 @@ import { WORLD_CUP_FIXTURE } from '@/lib/drawing/fixtures';
 import EaselScreen from '@/components/EaselScreen';
 import InputStep from '@/components/InputStep';
 import VibePicker from '@/components/VibePicker';
+import ResultView from '@/components/ResultView';
 
 export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -41,11 +42,12 @@ export default function Home() {
         <EaselScreen plan={state.plan} onDone={() => advance()} />
       )}
 
-      {state.step === 'result' && (
-        <section className="space-y-6">
-          <h2 className="text-2xl">Your portrait</h2>
-          <p className="opacity-60">(placeholder — download/share arrives in Task 8)</p>
-        </section>
+      {state.step === 'result' && state.plan && state.config && (
+        <ResultView
+          plan={state.plan}
+          config={state.config}
+          onRestart={() => setState(INITIAL_STATE)}
+        />
       )}
     </main>
   );
