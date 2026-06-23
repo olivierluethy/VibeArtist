@@ -6,6 +6,10 @@ const plan: DrawingPlan = {
   width: 400,
   height: 500,
   strokePaths: [{ d: 'M0 0 L10 0' }, { d: 'M0 10 L10 10' }],
+  colorCells: [
+    { x: 0, y: 0, w: 200, h: 500, fill: '#f00' },
+    { x: 200, y: 0, w: 200, h: 500, fill: '#0f0' },
+  ],
   shadingLayer: 'shade.png',
   colorImage: 'color.png',
   timing: { outlineMs: 1000, shadeMs: 1000, colorMs: 1000, accelerate: true },
@@ -46,13 +50,25 @@ describe('computeRenderState', () => {
     expect(s.colorOpacity).toBe(0);
   });
 
-  it('eases in the color phase when accelerate is true', () => {
-    const s = computeRenderState(plan, 2500); // halfway through color
+  it('paints color cells sequentially during the paint sub-phase', () => {
+    // colorMs=1000 → blendMs=200, paintMs=800. At color-elapsed 500: slice=400.
+    const s = computeRenderState(plan, 2500);
     expect(s.phase).toBe('color');
     expect(s.shadeOpacity).toBe(1);
-    expect(s.colorOpacity).toBeCloseTo(0.25); // easeIn(0.5) = 0.25
-    // colorProgress is LINEAR (drives the watchable scribble reveal), not eased.
     expect(s.colorProgress).toBeCloseTo(0.5);
+    expect(s.colorCellFractions[0]).toBe(1);
+    expect(s.colorCellFractions[1]).toBeCloseTo(0.25);
+    expect(s.activeColorCell).toBe(1);
+    expect(s.blendOpacity).toBe(0); // blend hasn't started
+  });
+
+  it('blends to the real photo after all cells are painted', () => {
+    // color-elapsed 900 > paintMs 800 → all cells filled, blend ramping.
+    const s = computeRenderState(plan, 2900);
+    expect(s.phase).toBe('color');
+    expect(s.colorCellFractions).toEqual([1, 1]);
+    expect(s.activeColorCell).toBeNull();
+    expect(s.blendOpacity).toBeCloseTo(0.5); // (900-800)/200
   });
 
   it('finishes done with everything at full', () => {
@@ -62,6 +78,8 @@ describe('computeRenderState', () => {
     expect(s.shadeOpacity).toBe(1);
     expect(s.colorOpacity).toBe(1);
     expect(s.colorProgress).toBe(1);
+    expect(s.colorCellFractions).toEqual([1, 1]);
+    expect(s.blendOpacity).toBe(1);
     expect(s.activeStroke).toBeNull();
   });
 

@@ -1,4 +1,4 @@
-import type { DrawingPlan, StrokePath } from './types';
+import type { ColorCell, DrawingPlan, StrokePath } from './types';
 
 export function svgDataUri(svg: string): string {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
@@ -6,6 +6,26 @@ export function svgDataUri(svg: string): string {
 
 const W = 400;
 const H = 500;
+
+// Synthetic color grid so mock mode previews the region-by-region coloring.
+// Roughly portrait-shaped: blue backdrop, skin face, red jersey below.
+function fixtureColorCells(): ColorCell[] {
+  const cols = 10;
+  const rows = 12;
+  const cw = W / cols;
+  const ch = H / rows;
+  const cells: ColorCell[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = c * cw + cw / 2;
+      const cy = r * ch + ch / 2;
+      const inFace = Math.hypot(cx - 200, cy - 210) < 90;
+      const fill = inFace ? '#f1c79b' : cy > 330 ? '#d4202a' : '#0b3d91';
+      cells.push({ x: c * cw, y: r * ch, w: cw, h: ch, fill });
+    }
+  }
+  return cells;
+}
 
 // Simple stylized face outline, drawn stroke by stroke (head, eyes, nose, mouth, jersey collar).
 const STROKES: StrokePath[] = [
@@ -39,6 +59,7 @@ export const WORLD_CUP_FIXTURE: DrawingPlan = {
   width: W,
   height: H,
   strokePaths: STROKES,
+  colorCells: fixtureColorCells(),
   shadingLayer: svgDataUri(shadingSvg),
   colorImage: svgDataUri(colorSvg),
   timing: { outlineMs: 18000, shadeMs: 4000, colorMs: 14000, accelerate: true },

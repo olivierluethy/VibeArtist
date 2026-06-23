@@ -73,6 +73,15 @@ function Preparing({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [pct, setPct] = useState(0);
+
+  // Honest, time-based progress: eases toward ~95% over ~18s (typical generation),
+  // never claiming 100% until the plan actually arrives and we advance.
+  useEffect(() => {
+    setPct(0);
+    const id = setInterval(() => setPct((p) => p + (96 - p) * 0.05), 250);
+    return () => clearInterval(id);
+  }, [attempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,12 +119,19 @@ function Preparing({
     );
   }
 
+  const stage =
+    pct < 45 ? 'Painting your portrait…' : pct < 80 ? 'Inking the outlines…' : 'Setting up the easel…';
+
   return (
     <section className="space-y-4">
-      <h2 className="text-2xl">The artist is preparing…</h2>
-      <div className="mx-auto h-2 w-48 overflow-hidden rounded-full bg-white/10">
-        <div className="h-full w-1/3 animate-pulse bg-[var(--gold)]" />
+      <h2 className="text-2xl">{stage}</h2>
+      <div className="mx-auto h-2 w-64 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full bg-[var(--gold)]"
+          style={{ width: `${pct}%`, transition: 'width 250ms linear' }}
+        />
       </div>
+      <p className="text-sm opacity-50">This takes around 15–20 seconds.</p>
     </section>
   );
 }

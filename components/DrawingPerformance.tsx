@@ -1,16 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { DrawingPlan } from '@/lib/drawing/types';
+import type { ColorCell, DrawingPlan } from '@/lib/drawing/types';
 import { computeRenderState } from '@/lib/drawing/performanceScheduler';
 
 interface Props {
   plan: DrawingPlan;
   onDone: () => void;
 }
-
-const SCRIBBLE_TEETH = 16; // zig-zags across the coloring front
-const BAND = 64; // height (px) of the scribbled reveal front
 
 export default function DrawingPerformance({ plan, onDone }: Props) {
   const pathRefs = useRef<(SVGPathElement | null)[]>([]);
@@ -21,10 +18,10 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
   const colorImgRef = useRef<HTMLImageElement | null>(null);
   const doneRef = useRef(false);
 
-  // Preload the color portrait off-DOM as the canvas source.
+  // Preload the real portrait off-DOM as the final cross-blend source.
+  // No crossOrigin: we only drawImage (never read pixels), so a tainted canvas
+  // is fine — and crossOrigin would make fal images fail to load without CORS.
   useEffect(() => {
-    // No crossOrigin: we only drawImage (never read pixels), so a tainted canvas is
-    // fine — and setting crossOrigin would make fal images fail to load without CORS.
     const img = new Image();
     img.src = plan.colorImage;
     colorImgRef.current = img;
@@ -39,7 +36,7 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
       const s = computeRenderState(plan, elapsed);
       stateRef.current = s;
 
-      // Self-drawing strokes via dashoffset.
+      // Outline: self-drawing strokes via dashoffset.
       plan.strokePaths.forEach((_, i) => {
         const el = pathRefs.current[i];
         if (!el) return;
@@ -48,17 +45,25 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
         el.style.strokeDashoffset = String(len * (1 - s.strokeFractions[i]));
       });
 
-      // Progressive coloring: reveal the portrait top-to-bottom through a scribble front.
-      paintColor(canvasRef.current, colorImgRef.current, plan.width, plan.height, s.colorProgress);
+      // Color: paint each cell in its own color, then cross-blend the real photo.
+      paintCells(
+        canvasRef.current,
+        plan.colorCells,
+        s.colorCellFractions,
+        colorImgRef.current,
+        s.blendOpacity,
+        plan.width,
+        plan.height,
+      );
 
-      // Hand: rides the active stroke during outline, then the coloring front.
+      // Hand: rides the active stroke (outline), then the active color cell (color).
       const hand = handRef.current;
       if (hand) {
-        if (s.phase === 'color') {
-          const frontY = s.colorProgress * (plan.height + BAND);
-          const sweep = (Math.sin(s.colorProgress * Math.PI * SCRIBBLE_TEETH) * 0.5 + 0.5) * plan.width;
-          hand.style.opacity = '1';
-          hand.style.transform = `translate(${sweep}px, ${frontY - 44}px)`;
+        if (s.phase === 'color' && s.activeColorCell != null && plan.colorCells[s.activeColorCell]) {
+          const cell = plan.colorCells[s.activeColorCell];
+          const f = s.colorCellFractions[s.activeColorCell] ?? 1;
+          hand.style.opacity = String(1 - s.blendOpacity); // hand bows out as the photo blends in
+          hand.style.transform = `translate(${cell.x + cell.w / 2}px, ${cell.y + cell.h * f - 44}px)`;
         } else if (s.activeStroke != null) {
           const el = pathRefs.current[s.activeStroke];
           if (el) {
@@ -91,7 +96,7 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
 
   return (
     <div className="relative mx-auto" style={{ width: plan.width, height: plan.height }}>
-      {/* Grayscale shading sits behind everything; below the coloring front it's the b/w sketch. */}
+      {/* Grayscale shading behind everything; below the colored cells it's the b/w sketch. */}
       <img
         src={plan.shadingLayer}
         alt=""
@@ -116,7 +121,7 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
           />
         ))}
       </svg>
-      {/* Color is painted on progressively here, covering the sketch as the front descends. */}
+      {/* Color is painted on here, cell by cell, then blended to the real photo. */}
       <canvas
         ref={canvasRef}
         width={plan.width}
@@ -134,54 +139,36 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
   );
 }
 
-/** Reveal the color portrait top-to-bottom through a scribbled, colored-pencil front. */
-function paintColor(
+/** Paint each colored cell (active one growing), then cross-blend the real photo over the top. */
+function paintCells(
   canvas: HTMLCanvasElement | null,
-  img: HTMLImageElement | null,
+  cells: ColorCell[],
+  fractions: number[],
+  photo: HTMLImageElement | null,
+  blendOpacity: number,
   w: number,
   h: number,
-  progress: number,
 ) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return; // jsdom / unsupported environment
 
   ctx.clearRect(0, 0, w, h);
-  if (progress <= 0 || !img || !img.complete || img.naturalWidth === 0) return;
 
-  const frontY = progress * (h + BAND);
-  const solidY = Math.max(0, frontY - BAND);
-
-  // Clip = fully revealed area above, plus a jagged scribble band at the front.
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(w, 0);
-  ctx.lineTo(w, solidY);
-  const dx = w / SCRIBBLE_TEETH;
-  for (let i = 0; i <= SCRIBBLE_TEETH; i++) {
-    const x = w - i * dx;
-    const y = solidY + (i % 2 === 0 ? BAND * 0.35 : BAND);
-    ctx.lineTo(x, y);
+  for (let i = 0; i < cells.length; i++) {
+    const f = fractions[i] ?? 0;
+    if (f <= 0) continue;
+    const cell = cells[i];
+    ctx.fillStyle = cell.fill;
+    // Grow the active cell top-to-bottom; +1 overlap avoids hairline gaps between cells.
+    ctx.fillRect(cell.x, cell.y, cell.w + 1, cell.h * f + 1);
   }
-  ctx.lineTo(0, solidY);
-  ctx.closePath();
-  ctx.clip();
-  ctx.drawImage(img, 0, 0, w, h);
-  ctx.restore();
 
-  // Colored-pencil hatching at the moving front for a hand-shaded texture.
-  if (progress < 1) {
+  // Final cross-blend to the real, high-resolution portrait.
+  if (blendOpacity > 0 && photo && photo.complete && photo.naturalWidth > 0) {
     ctx.save();
-    ctx.globalAlpha = 0.22;
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#3a2a1a';
-    ctx.beginPath();
-    for (let x = 0; x < w; x += 9) {
-      ctx.moveTo(x, solidY + BAND * 0.2);
-      ctx.lineTo(x + 7, frontY);
-    }
-    ctx.stroke();
+    ctx.globalAlpha = blendOpacity;
+    ctx.drawImage(photo, 0, 0, w, h);
     ctx.restore();
   }
 }
