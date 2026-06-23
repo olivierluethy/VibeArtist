@@ -41,5 +41,5 @@ export const WORLD_CUP_FIXTURE: DrawingPlan = {
   strokePaths: STROKES,
   shadingLayer: svgDataUri(shadingSvg),
   colorImage: svgDataUri(colorSvg),
-  timing: { outlineMs: 18000, shadeMs: 5000, colorMs: 6000, accelerate: true },
+  timing: { outlineMs: 18000, shadeMs: 4000, colorMs: 14000, accelerate: true },
 };

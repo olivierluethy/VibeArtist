@@ -19,6 +19,7 @@ describe('computeRenderState', () => {
     expect(s.activeStroke).toBe(0);
     expect(s.shadeOpacity).toBe(0);
     expect(s.colorOpacity).toBe(0);
+    expect(s.colorProgress).toBe(0);
   });
 
   it('draws strokes sequentially during outline', () => {
@@ -50,6 +51,8 @@ describe('computeRenderState', () => {
     expect(s.phase).toBe('color');
     expect(s.shadeOpacity).toBe(1);
     expect(s.colorOpacity).toBeCloseTo(0.25); // easeIn(0.5) = 0.25
+    // colorProgress is LINEAR (drives the watchable scribble reveal), not eased.
+    expect(s.colorProgress).toBeCloseTo(0.5);
   });
 
   it('finishes done with everything at full', () => {
@@ -58,6 +61,7 @@ describe('computeRenderState', () => {
     expect(s.strokeFractions).toEqual([1, 1]);
     expect(s.shadeOpacity).toBe(1);
     expect(s.colorOpacity).toBe(1);
+    expect(s.colorProgress).toBe(1);
     expect(s.activeStroke).toBeNull();
   });
 

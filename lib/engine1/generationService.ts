@@ -4,7 +4,9 @@ import { deriveLineArtFromBuffer, deriveShadingFromBuffer } from './derive';
 import { loadImageBuffer } from './imageSource';
 import type { PortraitEngine, PortraitInput } from './portraitEngine';
 
-export const DEFAULT_TIMING = { outlineMs: 18000, shadeMs: 5000, colorMs: 6000, accelerate: true };
+// colorMs is long enough to *watch* the portrait get colored in (progressive
+// scribble reveal), not a quick auto-fill. It's a tuning dial like MS_PER_STROKE.
+export const DEFAULT_TIMING = { outlineMs: 18000, shadeMs: 4000, colorMs: 14000, accelerate: true };
 
 // Outline pacing: scale the outline phase with the stroke count so each stroke
 // draws at a consistent, unhurried speed no matter how many a portrait traces to.

@@ -17,12 +17,14 @@ beforeAll(() => {
 });
 
 describe('DrawingPerformance', () => {
-  it('renders one path per stroke and both layers', () => {
+  it('renders one path per stroke, the shading + hand layers, and the color canvas', () => {
     const { container } = render(
       <DrawingPerformance plan={WORLD_CUP_FIXTURE} onDone={() => {}} />,
     );
     const paths = container.querySelectorAll('path');
     expect(paths.length).toBe(WORLD_CUP_FIXTURE.strokePaths.length);
-    expect(container.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
+    // shading + hand imgs (the color portrait is now painted on the canvas, not an <img>).
+    expect(container.querySelectorAll('img').length).toBe(2);
+    expect(container.querySelector('canvas')).toBeTruthy();
   });
 });

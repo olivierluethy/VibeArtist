@@ -18,6 +18,7 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       activeStroke: null,
       shadeOpacity: 1,
       colorOpacity: 1,
+      colorProgress: 1,
     };
   }
 
@@ -28,7 +29,7 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       return Math.min(1, Math.max(0, (t - start) / slice));
     });
     const activeStroke = n > 0 ? Math.min(n - 1, Math.floor(t / slice)) : null;
-    return { phase: 'outline', strokeFractions, activeStroke, shadeOpacity: 0, colorOpacity: 0 };
+    return { phase: 'outline', strokeFractions, activeStroke, shadeOpacity: 0, colorOpacity: 0, colorProgress: 0 };
   }
 
   if (t < outlineMs + shadeMs) {
@@ -39,6 +40,7 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       activeStroke: null,
       shadeOpacity: Math.min(1, p),
       colorOpacity: 0,
+      colorProgress: 0,
     };
   }
 
@@ -50,5 +52,6 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
     activeStroke: null,
     shadeOpacity: 1,
     colorOpacity,
+    colorProgress: Math.min(1, p),
   };
 }

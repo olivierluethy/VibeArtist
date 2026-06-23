@@ -33,4 +33,6 @@ export interface RenderState {
   activeStroke: number | null;
   shadeOpacity: number;
   colorOpacity: number;
+  /** Linear 0..1 across the color phase — drives the progressive scribble reveal. */
+  colorProgress: number;
 }
