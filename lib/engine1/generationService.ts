@@ -1,7 +1,7 @@
 import type { DrawingPlan } from '@/lib/drawing/types';
 import { traceToStrokePaths } from './lineart';
 import { deriveLineArtFromBuffer, deriveShadingFromBuffer } from './derive';
-import { deriveColorCellsFromBuffer } from './colorCells';
+import { deriveBrushStrokesFromBuffer } from './brushStrokes';
 import { loadImageBuffer } from './imageSource';
 import type { PortraitEngine, PortraitInput } from './portraitEngine';
 
@@ -29,12 +29,12 @@ export async function generateDrawingPlan(
   const lineArt = await deriveLineArtFromBuffer(buf);
   const strokePaths = await traceToStrokePaths(lineArt);
   const shadingLayer = await deriveShadingFromBuffer(buf);
-  const colorCells = await deriveColorCellsFromBuffer(buf, out.width, out.height);
+  const brushStrokes = await deriveBrushStrokesFromBuffer(buf, out.width, out.height);
   return {
     width: out.width,
     height: out.height,
     strokePaths,
-    colorCells,
+    brushStrokes,
     shadingLayer,
     colorImage: out.colorImage,
     timing: { ...DEFAULT_TIMING, outlineMs: outlineMsForStrokes(strokePaths.length) },

@@ -1,4 +1,4 @@
-import type { ColorCell, DrawingPlan, StrokePath } from './types';
+import type { BrushStroke, DrawingPlan, StrokePath } from './types';
 
 export function svgDataUri(svg: string): string {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
@@ -7,24 +7,29 @@ export function svgDataUri(svg: string): string {
 const W = 400;
 const H = 500;
 
-// Synthetic color grid so mock mode previews the region-by-region coloring.
+// Synthetic brush strokes so mock mode previews the brush painting.
 // Roughly portrait-shaped: blue backdrop, skin face, red jersey below.
-function fixtureColorCells(): ColorCell[] {
-  const cols = 10;
-  const rows = 12;
-  const cw = W / cols;
+// Grouped by colour (backdrop first, then skin, then jersey) like the real deriver.
+function fixtureBrushStrokes(): BrushStroke[] {
+  const rows = 16;
   const ch = H / rows;
-  const cells: ColorCell[] = [];
+  const backdrop: BrushStroke[] = [];
+  const skin: BrushStroke[] = [];
+  const jersey: BrushStroke[] = [];
   for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const cx = c * cw + cw / 2;
-      const cy = r * ch + ch / 2;
-      const inFace = Math.hypot(cx - 200, cy - 210) < 90;
-      const fill = inFace ? '#f1c79b' : cy > 330 ? '#d4202a' : '#0b3d91';
-      cells.push({ x: c * cw, y: r * ch, w: cw, h: ch, fill });
+    const y = r * ch + ch / 2;
+    if (y > 330) {
+      jersey.push({ points: [{ x: 40, y }, { x: 360, y }], color: '#d4202a', width: ch * 1.6 });
+    } else {
+      // backdrop sweep across the row…
+      backdrop.push({ points: [{ x: 0, y }, { x: W, y }], color: '#0b3d91', width: ch * 1.8 });
+      // …with a skin patch over the face area
+      if (y > 110 && y < 300) {
+        skin.push({ points: [{ x: 120, y }, { x: 280, y }], color: '#f1c79b', width: ch * 1.2 });
+      }
     }
   }
-  return cells;
+  return [...backdrop, ...skin, ...jersey];
 }
 
 // Simple stylized face outline, drawn stroke by stroke (head, eyes, nose, mouth, jersey collar).
@@ -59,7 +64,7 @@ export const WORLD_CUP_FIXTURE: DrawingPlan = {
   width: W,
   height: H,
   strokePaths: STROKES,
-  colorCells: fixtureColorCells(),
+  brushStrokes: fixtureBrushStrokes(),
   shadingLayer: svgDataUri(shadingSvg),
   colorImage: svgDataUri(colorSvg),
   timing: { outlineMs: 18000, shadeMs: 4000, colorMs: 14000, accelerate: true },

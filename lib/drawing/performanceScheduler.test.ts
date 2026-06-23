@@ -6,9 +6,9 @@ const plan: DrawingPlan = {
   width: 400,
   height: 500,
   strokePaths: [{ d: 'M0 0 L10 0' }, { d: 'M0 10 L10 10' }],
-  colorCells: [
-    { x: 0, y: 0, w: 200, h: 500, fill: '#f00' },
-    { x: 200, y: 0, w: 200, h: 500, fill: '#0f0' },
+  brushStrokes: [
+    { points: [{ x: 0, y: 250 }, { x: 200, y: 250 }], color: '#f00', width: 40 },
+    { points: [{ x: 200, y: 250 }, { x: 400, y: 250 }], color: '#0f0', width: 40 },
   ],
   shadingLayer: 'shade.png',
   colorImage: 'color.png',
@@ -56,18 +56,18 @@ describe('computeRenderState', () => {
     expect(s.phase).toBe('color');
     expect(s.shadeOpacity).toBe(1);
     expect(s.colorProgress).toBeCloseTo(0.5);
-    expect(s.colorCellFractions[0]).toBe(1);
-    expect(s.colorCellFractions[1]).toBeCloseTo(0.25);
-    expect(s.activeColorCell).toBe(1);
+    expect(s.brushFractions[0]).toBe(1);
+    expect(s.brushFractions[1]).toBeCloseTo(0.25);
+    expect(s.activeBrush).toBe(1);
     expect(s.blendOpacity).toBe(0); // blend hasn't started
   });
 
-  it('blends to the real photo after all cells are painted', () => {
-    // color-elapsed 900 > paintMs 800 → all cells filled, blend ramping.
+  it('blends to the real photo after all strokes are painted', () => {
+    // color-elapsed 900 > paintMs 800 → all strokes filled, blend ramping.
     const s = computeRenderState(plan, 2900);
     expect(s.phase).toBe('color');
-    expect(s.colorCellFractions).toEqual([1, 1]);
-    expect(s.activeColorCell).toBeNull();
+    expect(s.brushFractions).toEqual([1, 1]);
+    expect(s.activeBrush).toBeNull();
     expect(s.blendOpacity).toBeCloseTo(0.5); // (900-800)/200
   });
 
@@ -78,7 +78,7 @@ describe('computeRenderState', () => {
     expect(s.shadeOpacity).toBe(1);
     expect(s.colorOpacity).toBe(1);
     expect(s.colorProgress).toBe(1);
-    expect(s.colorCellFractions).toEqual([1, 1]);
+    expect(s.brushFractions).toEqual([1, 1]);
     expect(s.blendOpacity).toBe(1);
     expect(s.activeStroke).toBeNull();
   });

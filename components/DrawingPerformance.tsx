@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { ColorCell, DrawingPlan } from '@/lib/drawing/types';
+import type { BrushStroke, DrawingPlan } from '@/lib/drawing/types';
 import { computeRenderState } from '@/lib/drawing/performanceScheduler';
 
 interface Props {
@@ -45,25 +45,31 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
         el.style.strokeDashoffset = String(len * (1 - s.strokeFractions[i]));
       });
 
-      // Color: paint each cell in its own color, then cross-blend the real photo.
-      paintCells(
+      // Color: paint each brush stroke in its own color, then cross-blend the real photo.
+      paintBrush(
         canvasRef.current,
-        plan.colorCells,
-        s.colorCellFractions,
+        plan.brushStrokes,
+        s.brushFractions,
         colorImgRef.current,
         s.blendOpacity,
         plan.width,
         plan.height,
       );
 
-      // Hand: rides the active stroke (outline), then the active color cell (color).
+      // Hand: rides the active outline stroke, then the active brush (scaling with its size).
       const hand = handRef.current;
       if (hand) {
-        if (s.phase === 'color' && s.activeColorCell != null && plan.colorCells[s.activeColorCell]) {
-          const cell = plan.colorCells[s.activeColorCell];
-          const f = s.colorCellFractions[s.activeColorCell] ?? 1;
+        if (s.phase === 'color' && s.activeBrush != null && plan.brushStrokes[s.activeBrush]) {
+          const st = plan.brushStrokes[s.activeBrush];
+          const f = s.brushFractions[s.activeBrush] ?? 1;
+          const p0 = st.points[0];
+          const p1 = st.points[st.points.length - 1];
+          const x = p0.x + (p1.x - p0.x) * f;
+          const y = p0.y + (p1.y - p0.y) * f;
+          const toolScale = Math.max(0.7, Math.min(2.6, st.width / 22)); // bigger brush → bigger tool
           hand.style.opacity = String(1 - s.blendOpacity); // hand bows out as the photo blends in
-          hand.style.transform = `translate(${cell.x + cell.w / 2}px, ${cell.y + cell.h * f - 44}px)`;
+          hand.style.transformOrigin = 'left bottom';
+          hand.style.transform = `translate(${x}px, ${y - 44 * toolScale}px) scale(${toolScale})`;
         } else if (s.activeStroke != null) {
           const el = pathRefs.current[s.activeStroke];
           if (el) {
@@ -139,10 +145,10 @@ export default function DrawingPerformance({ plan, onDone }: Props) {
   );
 }
 
-/** Paint each colored cell (active one growing), then cross-blend the real photo over the top. */
-function paintCells(
+/** Paint each brush stroke (round brush travelling its path), then cross-blend the real photo. */
+function paintBrush(
   canvas: HTMLCanvasElement | null,
-  cells: ColorCell[],
+  strokes: BrushStroke[],
   fractions: number[],
   photo: HTMLImageElement | null,
   blendOpacity: number,
@@ -154,14 +160,28 @@ function paintCells(
   if (!ctx) return; // jsdom / unsupported environment
 
   ctx.clearRect(0, 0, w, h);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
-  for (let i = 0; i < cells.length; i++) {
+  for (let i = 0; i < strokes.length; i++) {
     const f = fractions[i] ?? 0;
     if (f <= 0) continue;
-    const cell = cells[i];
-    ctx.fillStyle = cell.fill;
-    // Grow the active cell top-to-bottom; +1 overlap avoids hairline gaps between cells.
-    ctx.fillRect(cell.x, cell.y, cell.w + 1, cell.h * f + 1);
+    const st = strokes[i];
+    const p0 = st.points[0];
+    const p1 = st.points[st.points.length - 1];
+    const x = p0.x + (p1.x - p0.x) * f;
+    const y = p0.y + (p1.y - p0.y) * f;
+    ctx.strokeStyle = st.color;
+    ctx.fillStyle = st.color;
+    ctx.lineWidth = st.width;
+    // A round dab at the start (covers zero-length sweeps), then a brush stroke to the tip.
+    ctx.beginPath();
+    ctx.arc(p0.x, p0.y, st.width / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
   }
 
   // Final cross-blend to the real, high-resolution portrait.

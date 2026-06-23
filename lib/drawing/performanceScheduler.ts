@@ -20,9 +20,9 @@ function sequentialFill(
 }
 
 export function computeRenderState(plan: DrawingPlan, elapsedMs: number): RenderState {
-  const { strokePaths, colorCells, timing } = plan;
+  const { strokePaths, brushStrokes, timing } = plan;
   const n = strokePaths.length;
-  const nCells = colorCells.length;
+  const nCells = brushStrokes.length;
   const { outlineMs, shadeMs, colorMs, accelerate } = timing;
   const total = outlineMs + shadeMs + colorMs;
   const t = Math.max(0, elapsedMs);
@@ -35,8 +35,8 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       shadeOpacity: 1,
       colorOpacity: 1,
       colorProgress: 1,
-      colorCellFractions: new Array(nCells).fill(1),
-      activeColorCell: null,
+      brushFractions: new Array(nCells).fill(1),
+      activeBrush: null,
       blendOpacity: 1,
     };
   }
@@ -50,8 +50,8 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       shadeOpacity: 0,
       colorOpacity: 0,
       colorProgress: 0,
-      colorCellFractions: new Array(nCells).fill(0),
-      activeColorCell: null,
+      brushFractions: new Array(nCells).fill(0),
+      activeBrush: null,
       blendOpacity: 0,
     };
   }
@@ -65,8 +65,8 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
       shadeOpacity: clamp01(p),
       colorOpacity: 0,
       colorProgress: 0,
-      colorCellFractions: new Array(nCells).fill(0),
-      activeColorCell: null,
+      brushFractions: new Array(nCells).fill(0),
+      activeBrush: null,
       blendOpacity: 0,
     };
   }
@@ -77,17 +77,17 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
   const blendMs = Math.min(2500, colorMs * 0.2);
   const paintMs = Math.max(1, colorMs - blendMs);
 
-  let colorCellFractions: number[];
-  let activeColorCell: number | null;
+  let brushFractions: number[];
+  let activeBrush: number | null;
   let blendOpacity: number;
   if (colorElapsed <= paintMs) {
     const r = sequentialFill(nCells, colorElapsed, paintMs);
-    colorCellFractions = r.fractions;
-    activeColorCell = r.active;
+    brushFractions = r.fractions;
+    activeBrush = r.active;
     blendOpacity = 0;
   } else {
-    colorCellFractions = new Array(nCells).fill(1);
-    activeColorCell = null;
+    brushFractions = new Array(nCells).fill(1);
+    activeBrush = null;
     blendOpacity = clamp01((colorElapsed - paintMs) / Math.max(1, blendMs));
   }
 
@@ -99,8 +99,8 @@ export function computeRenderState(plan: DrawingPlan, elapsedMs: number): Render
     shadeOpacity: 1,
     colorOpacity,
     colorProgress,
-    colorCellFractions,
-    activeColorCell,
+    brushFractions,
+    activeBrush,
     blendOpacity,
   };
 }
