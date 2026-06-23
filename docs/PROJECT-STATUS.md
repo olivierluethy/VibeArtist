@@ -4,7 +4,8 @@
 > (including a fresh AI session) can read this one file and immediately understand the project,
 > what's done, what's left, and exactly how to do the next step.
 >
-> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 39 passing (16 files) · **Build:** clean
+> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 46 passing (17 files) · **Build:** clean
+> *(Note: an earlier snapshot said "39"; the go-live commits added tests — real baseline is 46. `npx tsc --noEmit` also surfaces 4 pre-existing type errors in `lib/engine1/realPortraitEngine.test.ts` that `next build` doesn't catch — latent, tracked for cleanup.)*
 >
 > **Latest / CURRENT DIRECTION (2026-06-24):** the **painting-engine redesign** is the active work
 > (Engine 2's color renderer is being rebuilt as a true oil stroke-based engine — 100% strokes, no
@@ -28,7 +29,7 @@ strokes, coarse→fine, with a dedicated eyes/mouth pass — and **deletes the p
 layer**. Final canvas is **100% strokes**; the **souvenir is the painted-canvas `toBlob()` snapshot**, not
 the AI image. Detail-map + BlazeFace face detection live **server-side**; the browser stays a dumb performer.
 
-**Build order (additive until M5, so the 39 tests stay green throughout):**
+**Build order (additive until M5, so the 46 existing tests stay green throughout):**
 - **M0** — v2 contract (`oilTypes.ts`) + pacing scheduler (`oilScheduler.ts`, fixed Layer-4 reserved tail).
 - **M1** — renderer on a **static fixture** (`oilBrush.ts`, `oilFixture.ts`, `OilPerformance.tsx`, `/dev/oil`) — nails the look with zero AI.
 - **M2** — server derivation (`oilStrokes.ts`, `oilGenerationService.ts`).
@@ -144,7 +145,7 @@ hand-authored fixture plan *before* any AI existed. That de-risked the hardest p
 ```bash
 npm install
 npm run dev        # http://localhost:3000  — runs in MOCK mode (no keys, no cost)
-npm test           # 39 tests, all passing
+npm test           # 46 tests, all passing
 npm run build      # clean
 ```
 
