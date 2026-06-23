@@ -4,10 +4,41 @@
 > (including a fresh AI session) can read this one file and immediately understand the project,
 > what's done, what's left, and exactly how to do the next step.
 >
-> **Last updated:** 2026-06-23 · **Branch:** `master` · **Tests:** 39 passing (16 files) · **Build:** clean
+> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 39 passing (16 files) · **Build:** clean
 >
-> **Latest:** provider adapter is now **pre-wired for fal.ai FLUX PuLID** (see §6). Only a live
-> fal API key + a prompt-tuning pass remain before real portraits generate.
+> **Latest / CURRENT DIRECTION (2026-06-24):** the **painting-engine redesign** is the active work
+> (Engine 2's color renderer is being rebuilt as a true oil stroke-based engine — 100% strokes, no
+> AI-photo reveal). Design **approved**; spec + implementation plan committed (see §0 below). **Go-live
+> (fal.ai key + prompt tuning, §6) is paused behind the redesign** — the engine that performs the portrait
+> is changing, so wiring real generation now would be against the old renderer. Build the new engine first.
+
+---
+
+## 0. ⭐ Active work — Painting Engine Redesign (read this first)
+
+**Status:** design approved; implementation not yet started. **Decoupled-first, milestones M0→M5.**
+
+- **Spec (authoritative):** `docs/superpowers/specs/2026-06-23-painting-engine-redesign-design.md`
+- **Plan:** `docs/superpowers/plans/2026-06-23-painting-engine-redesign.md` (M0–M1 fully detailed; M2–M5 scoped)
+
+**What changes:** Engine 2's color stage today uses axis-aligned grid strokes, a grayscale-image shading
+fade, and a final cross-blend of the AI photo (`drawImage`). The redesign **replaces** that with a
+server-derived `OilStroke[]` performed on an **accumulating bitmap** as oriented, bristle-textured oil
+strokes, coarse→fine, with a dedicated eyes/mouth pass — and **deletes the photo blend and the shading
+layer**. Final canvas is **100% strokes**; the **souvenir is the painted-canvas `toBlob()` snapshot**, not
+the AI image. Detail-map + BlazeFace face detection live **server-side**; the browser stays a dumb performer.
+
+**Build order (additive until M5, so the 39 tests stay green throughout):**
+- **M0** — v2 contract (`oilTypes.ts`) + pacing scheduler (`oilScheduler.ts`, fixed Layer-4 reserved tail).
+- **M1** — renderer on a **static fixture** (`oilBrush.ts`, `oilFixture.ts`, `OilPerformance.tsx`, `/dev/oil`) — nails the look with zero AI.
+- **M2** — server derivation (`oilStrokes.ts`, `oilGenerationService.ts`).
+- **M3** — face targeting (`faceBox.ts`, BlazeFace via `onnxruntime-node`).
+- **M4** — choreography polish (pacing/tool tuning).
+- **M5** — switch app flow to the oil engine, export painted snapshot, delete v1 (`DrawingPerformance`,
+  `performanceScheduler`, `brushStrokes`, shading), rename `OilDrawingPlan`→`DrawingPlan`.
+
+> §1–§5 below describe the **current (v1) engine that is being replaced** — accurate for what's on `master`
+> today, but the color/shading/blend parts are slated for removal in M5. §6 (go-live) is **paused** behind this.
 
 ---
 
@@ -122,7 +153,7 @@ flow — capture/upload → pick team → watch the draw → download/share — 
 
 ---
 
-## 6. ⏭️ GO-LIVE — provider adapter (pre-wired for fal.ai FLUX PuLID)
+## 6. ⏸️ GO-LIVE — provider adapter (pre-wired for fal.ai FLUX PuLID) — PAUSED behind the redesign (§0)
 
 **Provider decision (2026-06-23):** **fal.ai**, model **FLUX PuLID**. Chosen over Replicate for
 predictable per-portrait pricing and fast warm starts (Replicate's 30–90s cold starts at low traffic
