@@ -9,12 +9,12 @@ afterEach(() => {
 });
 
 describe('RealPortraitEngine', () => {
-  it('posts the prompt and maps the response', async () => {
-    process.env.PORTRAIT_API_URL = 'https://api.example.com/generate';
+  it('posts the prompt and maps the fal response', async () => {
+    process.env.PORTRAIT_API_URL = 'https://fal.run/fal-ai/flux-pulid';
     process.env.PORTRAIT_API_KEY = 'secret';
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({ colorImage: 'c.png', width: 400, height: 500 }),
+        JSON.stringify({ images: [{ url: 'c.png', width: 400, height: 500 }] }),
         { status: 200 },
       ),
     );
@@ -23,8 +23,12 @@ describe('RealPortraitEngine', () => {
     const out = await new RealPortraitEngine().generate({ selfie: 'data:...', team: 'Brazil' });
 
     expect(out.colorImage).toBe('c.png');
+    expect(out.width).toBe(400);
     expect(fetchMock).toHaveBeenCalledOnce();
     const [, init] = fetchMock.mock.calls[0];
+    // fal-specific contract: "Key" auth, single reference image, prompt carries the team.
+    expect((init?.headers as Record<string, string>)?.authorization).toBe('Key secret');
+    expect(String(init?.body)).toContain('reference_image_url');
     expect(String(init?.body)).toContain('Brazil');
   });
 
@@ -60,9 +64,9 @@ describe('RealPortraitEngine', () => {
           { status: 200 },
         );
       }
-      // Second call: GET poll — returns finished job
+      // Second call: GET poll — returns finished job (fal output shape)
       return new Response(
-        JSON.stringify({ status: 'succeeded', output: { colorImage: 'c.png', width: 400, height: 500 } }),
+        JSON.stringify({ status: 'COMPLETED', images: [{ url: 'c.png', width: 400, height: 500 }] }),
         { status: 200 },
       );
     });

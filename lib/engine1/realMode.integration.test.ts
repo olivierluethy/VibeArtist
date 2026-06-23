@@ -21,12 +21,10 @@ describe('real-mode pipeline (provider returns one portrait, line-art + shading 
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       if (u === 'https://provider.example/generate') {
-        // The image provider responds with a single portrait URL (one-image contract).
+        // The image provider (fal.ai shape) responds with one portrait in an images array.
         return new Response(
           JSON.stringify({
-            colorImage: 'https://cdn.example/portrait.png',
-            width: 80,
-            height: 80,
+            images: [{ url: 'https://cdn.example/portrait.png', width: 80, height: 80 }],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
