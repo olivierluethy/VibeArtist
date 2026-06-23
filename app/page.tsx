@@ -71,24 +71,44 @@ function Preparing({
   config: { team: string; player?: string };
   onReady: (plan: DrawingPlan) => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
+    setError(null);
+    // Guard against a hung request (e.g. a server error that sends no response).
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
     (async () => {
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ selfie: photo, team: config.team, player: config.player }),
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error(`generate failed: ${res.status}`);
         const plan = (await res.json()) as DrawingPlan;
         if (!cancelled) onReady(plan);
       } catch {
-        if (!cancelled) alert('The artist needs a moment — please try again.');
+        if (!cancelled) setError('The artist hit a snag and couldn’t finish the portrait.');
+      } finally {
+        clearTimeout(timeout);
       }
     })();
-    return () => { cancelled = true; };
-  }, [photo, config, onReady]);
+    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); };
+  }, [photo, config, onReady, attempt]);
+
+  if (error) {
+    return (
+      <section className="space-y-5">
+        <h2 className="text-2xl">Hmm, that didn’t work</h2>
+        <p className="opacity-70">{error}</p>
+        <button className="btn-gold" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-4">

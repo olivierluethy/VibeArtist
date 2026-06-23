@@ -1,7 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { traceToStrokePaths } from './lineart';
+import { traceToStrokePaths, splitSubpaths } from './lineart';
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('splitSubpaths', () => {
+  it('splits a compound potrace path into one stroke per subpath', () => {
+    expect(splitSubpaths('M1 2 c3 4 z M5 6 l7 8 z')).toEqual(['M1 2 c3 4 z', 'M5 6 l7 8 z']);
+  });
+
+  it('returns a single stroke for a single subpath', () => {
+    expect(splitSubpaths('M0 0 L1 1')).toEqual(['M0 0 L1 1']);
+  });
+
+  it('ignores empty input', () => {
+    expect(splitSubpaths('')).toEqual([]);
+  });
+});
 
 describe('traceToStrokePaths', () => {
   it('fetches a remote URL line-art and returns an array (decode-fail degrades to [])', async () => {

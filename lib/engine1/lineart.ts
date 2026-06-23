@@ -8,6 +8,21 @@ export function extractPathData(svg: string): string[] {
   return Array.from(matches, (m) => m[1]);
 }
 
+/**
+ * potrace bundles the whole trace into one compound `d` (many `M…` subpaths).
+ * Split it into individual subpaths so each draws as its own pencil stroke —
+ * turning a single blob-draw into a region-by-region sketch.
+ */
+export function splitSubpaths(d: string): string[] {
+  return d
+    .split(/(?=M)/) // potrace starts every subpath with an absolute moveto (capital M)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Cap strokes so the easel performance stays smooth (one <path> animates per frame). */
+const MAX_STROKES = 160;
+
 export async function traceToStrokePaths(src: string): Promise<StrokePath[]> {
   const buf = await loadImageBuffer(src);
   return new Promise((resolve, reject) => {
@@ -21,7 +36,11 @@ export async function traceToStrokePaths(src: string): Promise<StrokePath[]> {
       }
       trace(buf, { turdSize: 40, threshold: 160 }, (err, svg) => {
         if (err) return reject(err);
-        resolve(extractPathData(svg).map((d) => ({ d })));
+        const strokes = extractPathData(svg).flatMap(splitSubpaths);
+        if (strokes.length > MAX_STROKES) {
+          console.warn(`[lineart] ${strokes.length} strokes traced; capping to ${MAX_STROKES}`);
+        }
+        resolve(strokes.slice(0, MAX_STROKES).map((d) => ({ d })));
       });
     });
   });
