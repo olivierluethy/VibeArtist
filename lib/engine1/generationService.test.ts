@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateDrawingPlan } from './generationService';
+import { generateDrawingPlan, outlineMsForStrokes, MS_PER_STROKE } from './generationService';
 import { buildPrompt, type PortraitEngine } from './portraitEngine';
 import { extractPathData } from './lineart';
 
@@ -32,5 +32,11 @@ describe('generationService', () => {
 
   it('extractPathData pulls d attributes from svg', () => {
     expect(extractPathData('<svg><path d="M0 0 L1 1"/></svg>')).toEqual(['M0 0 L1 1']);
+  });
+
+  it('scales outline duration with stroke count, clamped to sane bounds', () => {
+    expect(outlineMsForStrokes(84)).toBe(84 * MS_PER_STROKE); // mid-range scales linearly
+    expect(outlineMsForStrokes(1)).toBe(8000); // floor — a sparse sketch isn't over in a blink
+    expect(outlineMsForStrokes(1000)).toBe(45000); // ceiling — a busy sketch doesn't run forever
   });
 });
