@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { INITIAL_STATE, nextStep, type AppState } from '@/lib/flow';
 import { isKiosk, IDLE_RESET_MS } from '@/lib/kiosk';
-import type { DrawingPlan } from '@/lib/drawing/types';
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
 import EaselScreen from '@/components/EaselScreen';
 import InputStep from '@/components/InputStep';
 import VibePicker from '@/components/VibePicker';
@@ -69,7 +69,7 @@ function Preparing({
 }: {
   photo: string;
   config: { team: string; player?: string };
-  onReady: (plan: DrawingPlan) => void;
+  onReady: (plan: OilDrawingPlan) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -98,7 +98,7 @@ function Preparing({
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`generate failed: ${res.status}`);
-        const plan = (await res.json()) as DrawingPlan;
+        const plan = (await res.json()) as OilDrawingPlan;
         if (!cancelled) onReady(plan);
       } catch {
         if (!cancelled) setError('The artist hit a snag and couldn’t finish the portrait.');

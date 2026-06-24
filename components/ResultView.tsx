@@ -1,6 +1,6 @@
 'use client';
 
-import type { DrawingPlan } from '@/lib/drawing/types';
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
 import { shareText } from '@/lib/share';
 
 export default function ResultView({
@@ -8,7 +8,7 @@ export default function ResultView({
   config,
   onRestart,
 }: {
-  plan: DrawingPlan;
+  plan: OilDrawingPlan;
   config: { team: string; player?: string };
   onRestart: () => void;
 }) {

@@ -1,4 +1,4 @@
-import type { DrawingPlan } from './drawing/types';
+import type { OilDrawingPlan } from './drawing/oilTypes';
 
 export type Step = 'start' | 'input' | 'vibe' | 'preparing' | 'performance' | 'result';
 
@@ -6,7 +6,7 @@ export interface AppState {
   step: Step;
   photo: string | null;
   config: { team: string; player?: string } | null;
-  plan: DrawingPlan | null;
+  plan: OilDrawingPlan | null;
 }
 
 const ORDER: Step[] = ['start', 'input', 'vibe', 'preparing', 'performance', 'result'];
