@@ -42,12 +42,9 @@ describe('deriveOilStrokesFromBuffer (layers 0–1)', () => {
 
   it('is strictly layer-ascending AND contiguous (no gaps/interleaving — the scheduler indexes by per-layer count)', async () => {
     const layers = (await deriveOilStrokesFromBuffer(buf, 400, 500)).map((k) => k.layer);
-    // Layers 0–3 are all emitted (T9 added layers 2–3 after layers 0–1).
-    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
-    // Monotonic non-decreasing ⇒ each layer is one contiguous block; assert that explicitly.
-    for (let i = 1; i < layers.length; i++) expect(layers[i]).toBeGreaterThanOrEqual(layers[i - 1]);
-    const firstOne = layers.indexOf(1);
-    expect(layers.slice(0, firstOne).every((L) => L === 0)).toBe(true); // every stroke before the first layer-1 is layer-0
+    expect(layers.length).toBeGreaterThan(0);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // ascending ⇒ contiguous blocks (no interleaving); layer-set-agnostic
+    expect(layers).not.toContain(4); // no eyesMouth provided → no dedicated eyes/mouth pass
   });
 
   it('takes each stroke angle from the orientation field tangent (consistent with T7)', async () => {
@@ -112,25 +109,44 @@ describe('deriveOilStrokesFromBuffer (layers 2–3 + box boost)', () => {
     expect(detIn(boosted)).toBeGreaterThan(detIn(base));
   });
 
-  it('stays strictly layer-ascending AND contiguous over {0,1,2,3}', async () => {
+  it('stays strictly layer-ascending AND contiguous (full-canvas box, no eyesMouth)', async () => {
     const layers = (await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 0, y: 0, w: 400, h: 500 } })).map((k) => k.layer);
-    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
-    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // monotonic non-decreasing ⇒ contiguous blocks, no interleaving
-    expect(Math.max(...layers)).toBe(3);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b));
+    expect(layers).not.toContain(4); // box boost is density-only; no eyesMouth ⇒ still no layer 4
   });
 
-  it('faceBox=null → pure-magnitude fallback: valid non-empty plan, layers 0–3 only', async () => {
+  it('faceBox=null → pure-magnitude fallback: valid non-empty, no layer 4', async () => {
     const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, null);
     expect(s.length).toBeGreaterThan(0);
-    expect(s.every((k) => k.layer >= 0 && k.layer <= 3)).toBe(true);
+    expect(s.some((k) => k.layer === 4)).toBe(false); // layer 4 needs eyesMouth; accents (5) may still appear
+  });
+});
+
+describe('deriveOilStrokesFromBuffer (layers 4–5, locality, budget)', () => {
+  it('emits a layer-4 pass IFF eyesMouth is present, confined (within jitter) to that rect', async () => {
+    const buf = await busyPng(128, 160);
+    const noFace = (await deriveOilStrokesFromBuffer(buf, 400, 500, null)).filter((k) => k.layer === 4);
+    expect(noFace.length).toBe(0); // no eyesMouth ⇒ no dedicated pass
+    const em = { x: 150, y: 180, w: 100, h: 120 };
+    const withEM = (await deriveOilStrokesFromBuffer(buf, 400, 500, { box: { x: 120, y: 110, w: 160, h: 190 }, eyesMouth: em })).filter((k) => k.layer === 4);
+    expect(withEM.length).toBeGreaterThan(0);
+    const M = 2; // layer-4 step is 5 ⇒ jitter ≤ ±1.5px; the GATE checks the grid point, the stroke is jittered, so allow a 2px margin
+    for (const k of withEM) {
+      expect(k.x).toBeGreaterThanOrEqual(em.x - M); expect(k.x).toBeLessThanOrEqual(em.x + em.w + M);
+      expect(k.y).toBeGreaterThanOrEqual(em.y - M); expect(k.y).toBeLessThanOrEqual(em.y + em.h + M);
+    }
   });
 
-  it('does NOT emit any eyes/mouth (layer 4+) pass yet — deferred to T10 — even when eyesMouth is provided', async () => {
-    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, {
-      box: { x: 120, y: 110, w: 160, h: 190 },
-      eyesMouth: { x: 150, y: 180, w: 100, h: 120 },
-    });
-    expect(s.some((k) => k.layer >= 4)).toBe(false); // T9 ignores eyesMouth; no layer-4 special-casing
-    expect(Math.max(...s.map((k) => k.layer))).toBe(3);
+  it('emits layer-5 accents that sort LAST; whole array ascending AND contiguous through 0..5', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 120, y: 110, w: 160, h: 190 }, eyesMouth: { x: 150, y: 180, w: 100, h: 120 } });
+    const layers = s.map((k) => k.layer);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // ascending ⇒ contiguous
+    expect(layers[layers.length - 1]).toBe(5);                  // accents land last
+    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3, 4, 5])); // all six layers present with box + eyesMouth
+  });
+
+  it('never exceeds the stroke budget', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(256, 320), 400, 500, null);
+    expect(s.length).toBeLessThanOrEqual(4000);
   });
 });

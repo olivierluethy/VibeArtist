@@ -70,9 +70,53 @@ export async function deriveOilStrokesFromBuffer(
     return m > thresh;
   };
 
-  emitLayer(0, () => true);                                          // block-in: covers everything
-  emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15); // forms: low magnitude gate
-  emitLayer(2, magGate(0.30, 0.20)); // detail: mid gate, boosted inside the box
-  emitLayer(3, magGate(0.50, 0.25)); // fine: high gate, boosted inside the box
-  return out;
+  const luminanceAt = (x: number, y: number): number => {
+    const cx = Math.max(0, Math.min(cW - 1, Math.floor((x / dispW) * cW)));
+    const cy = Math.max(0, Math.min(cH - 1, Math.floor((y / dispH) * cH)));
+    const { r, g, b } = Jimp.intToRGBA(small.getPixelColor(cx, cy));
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  };
+
+  emitLayer(0, () => true);
+  emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15);
+  emitLayer(2, magGate(0.30, 0.20));
+  emitLayer(3, magGate(0.50, 0.25));
+  if (_faceBox?.eyesMouth) {
+    const em = _faceBox.eyesMouth;
+    emitLayer(4, (x, y) => inRect(x, y, em)); // dedicated, dense, confined to eyes/mouth
+  }
+  // Accents: darkest darks with high local detail; darkened colour, sort last.
+  const accentStart = out.length;
+  emitLayer(5, (x, y) => luminanceAt(x, y) < 0.30 && field.magnitudeAt(x, y, dispW, dispH) > 0.45);
+  for (let i = accentStart; i < out.length; i++) {
+    const { r, g, b } = Jimp.intToRGBA(small.getPixelColor(
+      Math.max(0, Math.min(cW - 1, Math.floor((out[i].x / dispW) * cW))),
+      Math.max(0, Math.min(cH - 1, Math.floor((out[i].y / dispH) * cH))),
+    ));
+    out[i].color = `#${hex2(r * 0.4)}${hex2(g * 0.4)}${hex2(b * 0.4)}`; // bite of dark
+  }
+
+  // Within-layer locality: serpentine sweep (row band, alternating left/right) — keeps layer-ascending.
+  const BAND = 40;
+  const ordered = out
+    .map((s, idx) => ({ s, idx }))
+    .sort((a, b) => {
+      if (a.s.layer !== b.s.layer) return a.s.layer - b.s.layer;
+      const ba = Math.floor(a.s.y / BAND), bb = Math.floor(b.s.y / BAND);
+      if (ba !== bb) return ba - bb;
+      const dir = ba % 2 === 0 ? 1 : -1;
+      if (a.s.x !== b.s.x) return (a.s.x - b.s.x) * dir;
+      return a.idx - b.idx; // stable
+    })
+    .map((e) => e.s);
+
+  // Budget: ~4k cap; thin uniformly per layer if exceeded (logged, never silent).
+  const BUDGET = 4000;
+  if (ordered.length > BUDGET) {
+    const keep = BUDGET / ordered.length;
+    const thinned = ordered.filter((_, i) => rnd(i) < keep);
+    console.warn(`[oilStrokes] budget thinning: ${ordered.length} → ${thinned.length} (cap ${BUDGET})`);
+    return thinned;
+  }
+  return ordered;
 }
