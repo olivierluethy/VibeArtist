@@ -12,6 +12,17 @@ async function busyPng(w: number, h: number): Promise<Buffer> {
   return img.getBufferAsync(Jimp.MIME_PNG);
 }
 
+// Quadratic luminance ramp → a CONTINUUM of detail magnitudes (slope grows with x),
+// so some cells land between the boosted and base gate thresholds.
+async function gradPng(w: number, h: number): Promise<Buffer> {
+  const img = await Jimp.create(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const v = Math.round((x / (w - 1)) ** 2 * 255);
+    img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+  }
+  return img.getBufferAsync(Jimp.MIME_PNG);
+}
+
 describe('deriveOilStrokesFromBuffer (layers 0–1)', () => {
   let buf: Buffer;
   beforeAll(async () => { buf = await busyPng(128, 160); });
@@ -31,12 +42,12 @@ describe('deriveOilStrokesFromBuffer (layers 0–1)', () => {
 
   it('is strictly layer-ascending AND contiguous (no gaps/interleaving — the scheduler indexes by per-layer count)', async () => {
     const layers = (await deriveOilStrokesFromBuffer(buf, 400, 500)).map((k) => k.layer);
-    expect(new Set(layers)).toEqual(new Set([0, 1]));
+    // Layers 0–3 are all emitted (T9 added layers 2–3 after layers 0–1).
+    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
     // Monotonic non-decreasing ⇒ each layer is one contiguous block; assert that explicitly.
     for (let i = 1; i < layers.length; i++) expect(layers[i]).toBeGreaterThanOrEqual(layers[i - 1]);
     const firstOne = layers.indexOf(1);
     expect(layers.slice(0, firstOne).every((L) => L === 0)).toBe(true); // every stroke before the first layer-1 is layer-0
-    expect(layers.slice(firstOne).every((L) => L === 1)).toBe(true);    // and no layer-0 ever reappears after
   });
 
   it('takes each stroke angle from the orientation field tangent (consistent with T7)', async () => {
@@ -72,5 +83,54 @@ describe('deriveOilStrokesFromBuffer (layers 0–1)', () => {
     const a = await deriveOilStrokesFromBuffer(buf, 400, 500);
     const b = await deriveOilStrokesFromBuffer(buf, 400, 500);
     expect(a).toEqual(b);
+  });
+});
+
+describe('deriveOilStrokesFromBuffer (layers 2–3 + box boost)', () => {
+  it('a busy image yields more layer 2–3 strokes than a flat image', async () => {
+    const busy = await busyPng(128, 160);
+    const flatImg = await Jimp.create(128, 160);
+    for (let y = 0; y < 160; y++) for (let x = 0; x < 128; x++) flatImg.setPixelColor(Jimp.rgbaToInt(128,128,128,255), x, y);
+    const flat = await flatImg.getBufferAsync(Jimp.MIME_PNG);
+    const det = (s: { layer: number }[]) => s.filter((k) => k.layer === 2 || k.layer === 3).length;
+    expect(det(await deriveOilStrokesFromBuffer(busy, 400, 500)))
+      .toBeGreaterThan(det(await deriveOilStrokesFromBuffer(flat, 400, 500)));
+  });
+
+  it('box boost is a DENSITY effect: strictly more layer 2–3 strokes centred INSIDE the box', async () => {
+    // gradPng gives a continuum of magnitudes (no saturation), so lowering the gate inside the box
+    // is a strict superset there. Pin the positive effect: more detail strokes land inside the box.
+    // (Localization — that the boost is confined to the box, not global — is verified by CODE-READ in
+    //  review: the gate is `inRect(x,y,box) ? base - boost : base`. An emergent "nothing added outside"
+    //  equality is fragile because the per-pass seed advance diverges the outside jitter between runs.)
+    const grad = await gradPng(128, 160);
+    const box = { x: 0, y: 0, w: 200, h: 500 }; // left half, display coords
+    const detIn = (s: { layer: number; x: number }[]) =>
+      s.filter((k) => (k.layer === 2 || k.layer === 3) && k.x <= 200).length;
+    const base = await deriveOilStrokesFromBuffer(grad, 400, 500, null);
+    const boosted = await deriveOilStrokesFromBuffer(grad, 400, 500, { box });
+    expect(detIn(boosted)).toBeGreaterThan(detIn(base));
+  });
+
+  it('stays strictly layer-ascending AND contiguous over {0,1,2,3}', async () => {
+    const layers = (await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 0, y: 0, w: 400, h: 500 } })).map((k) => k.layer);
+    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // monotonic non-decreasing ⇒ contiguous blocks, no interleaving
+    expect(Math.max(...layers)).toBe(3);
+  });
+
+  it('faceBox=null → pure-magnitude fallback: valid non-empty plan, layers 0–3 only', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, null);
+    expect(s.length).toBeGreaterThan(0);
+    expect(s.every((k) => k.layer >= 0 && k.layer <= 3)).toBe(true);
+  });
+
+  it('does NOT emit any eyes/mouth (layer 4+) pass yet — deferred to T10 — even when eyesMouth is provided', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, {
+      box: { x: 120, y: 110, w: 160, h: 190 },
+      eyesMouth: { x: 150, y: 180, w: 100, h: 120 },
+    });
+    expect(s.some((k) => k.layer >= 4)).toBe(false); // T9 ignores eyesMouth; no layer-4 special-casing
+    expect(Math.max(...s.map((k) => k.layer))).toBe(3);
   });
 });

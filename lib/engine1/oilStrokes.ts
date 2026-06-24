@@ -60,7 +60,19 @@ export async function deriveOilStrokesFromBuffer(
     }
   };
 
+  const inRect = (x: number, y: number, rect?: Rect) =>
+    !!rect && x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+
+  // Magnitude gate that relaxes inside the face box (more, smaller strokes there).
+  const magGate = (base: number, boost: number) => (x: number, y: number) => {
+    const m = field.magnitudeAt(x, y, dispW, dispH);
+    const thresh = inRect(x, y, _faceBox?.box) ? base - boost : base;
+    return m > thresh;
+  };
+
   emitLayer(0, () => true);                                          // block-in: covers everything
   emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15); // forms: low magnitude gate
-  return out; // already layer-ascending (0 then 1)
+  emitLayer(2, magGate(0.30, 0.20)); // detail: mid gate, boosted inside the box
+  emitLayer(3, magGate(0.50, 0.25)); // fine: high gate, boosted inside the box
+  return out;
 }
