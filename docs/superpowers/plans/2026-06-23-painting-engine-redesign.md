@@ -1810,17 +1810,174 @@ const realRunner: FaceModelRunner = async (buf) => {
 
 **Task 14 — pacing + tool tuning.** Tune `timing` defaults and `LAYER4_RESERVE_MS` against real generated portraits; add distinct tool sprites (`/tool-pencil.svg`, `/tool-brush.svg`, `/tool-pen.svg`) and map them in `OilPerformance`'s `TOOL_SRC`. Add a scheduler test asserting the tool sequence over a full timeline (pencil→brushBig→brushMid→brushFine→pen→null). Verify in `/dev/oil`.
 
-### M5 — switch app over + retire v1 (the ONLY milestone that edits/deletes v1)
+### M5 — switch app over + retire v1  *(EXPANDED 2026-06-24; the ONLY milestone that edits/deletes v1)*
 
-**Task 15 — adopt v2 as the canonical contract.** Move `OilStroke`/`OilDrawingPlan`/timing into `lib/drawing/types.ts`, renaming `OilDrawingPlan`→`DrawingPlan` (the spec's final name); update `oil*` imports.
+> **Expansion notes (user-locked decisions):**
+> - **Detector-independent.** The real path is `generateOilDrawingPlan(input, RealPortraitEngine)` → `detectFaceBox` → `null` (unwired stub, M3.4 parked) → pure detail-driven. **No BlazeFace anywhere in M5.** The app paints via the fallback.
+> - **RENAME DEFERRED.** Plan's old "Task 15" (rename `OilDrawingPlan`→`DrawingPlan`, fold `oilTypes.ts` into `types.ts`) is **dropped from M5** — cosmetic, ~10-file churn, zero functional gain. Keep `OilDrawingPlan`/`oilTypes.ts` names. (Isolated find-replace later if desired.)
+> - **Souvenir is the heartbeat (T2):** download = the painting `<canvas>` `toBlob()` snapshot as `drawmyai-portrait.png`, **never `plan.colorImage`** (the AI image). Captured at `phase==='done'`. Clean by construction: the hand `<img>` and SVG sketch are sibling DOM nodes, never drawn into the canvas, and the hand is lifted (opacity 0) at done — so the saved image matches the live final frame, no hand.
+> - **`photoGlaze > 0` taint:** if a future glaze does `drawImage(colorImage)` (cross-origin) the canvas taints → `toBlob` throws → snapshot fails. Default `photoGlaze=0` avoids it; recorded as a code comment + here.
+> - **Three tasks, per-task gate** (all tests green, no new tsc errors beyond the 4 known in `realPortraitEngine.test.ts`, independent review, **stop for review after each**). T3's manual look-review is the user's. Baseline at M5 start: **94 green**.
 
-**Task 16 — switch the route + flow.** `app/api/generate/route.ts` calls `generateOilDrawingPlan`; mock mode returns `OIL_FIXTURE` (or a derived mock plan); `app/page.tsx`/`EaselScreen.tsx` render `OilPerformance` instead of `DrawingPerformance`.
+---
 
-**Task 17 — souvenir = painted snapshot.** `ResultView.tsx` downloads the painting `<canvas>` via `toBlob()` (lift the snapshot from `OilPerformance` via a ref/callback), **not** `plan.colorImage`. Add a note that `photoGlaze > 0` taints the canvas and disables export.
+#### Task M5.1: switch the app flow onto the oil engine *(ATOMIC type+render swap)*
 
-**Task 18 — delete v1 + reconcile tests.** Remove `components/DrawingPerformance.tsx`, `lib/drawing/performanceScheduler.ts`, `lib/engine1/brushStrokes.ts`, the shading derivation in `derive.ts`, and the v1 `brushStrokes`/`shadingLayer` fields + the old fixture's brush parts. Update or delete their tests (`DrawingPerformance.test.tsx`, `performanceScheduler.test.ts`, the brushStrokes test, the `derive` shading test, the fixtures test). Run `npm run test` + `npm run build`; both green. Move `/dev/oil` behind a dev-only guard or delete it.
+**Files (modify):** `app/api/generate/route.ts`, `lib/flow.ts`, `app/page.tsx`, `components/EaselScreen.tsx`, `components/ResultView.tsx`. (v1 files stay — deleted in M5.3.)
 
-**M5 EXIT CRITERIA:** the real app flow performs the oil engine end-to-end, the download is the painted snapshot, no v1 reveal/shading code remains, and the suite + build are green.
+> Atomic because the `plan` type threads through route → `AppState` → `EaselScreen`/`ResultView`; a half-swap won't typecheck.
+
+- [ ] **Step 1: Sweep for affected tests** — `rg -n "resolvePlan|generateDrawingPlan|WORLD_CUP_FIXTURE"` . Any test asserting the route/`resolvePlan` returns a v1-shaped plan (e.g. `brushStrokes`/`shadingLayer`) must be updated in this task to the oil shape (`oilStrokes`, no `shadingLayer`). If `realMode.integration.test.ts` tests the *route*, update it here; if it tests v1 `generateDrawingPlan` *directly*, leave it for M5.3 (deleted with v1).
+
+- [ ] **Step 2: `app/api/generate/route.ts`** — swap imports + `resolvePlan` (POST handler unchanged):
+```ts
+import { NextResponse } from 'next/server';
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
+import { OIL_FIXTURE } from '@/lib/drawing/oilFixture';
+import { generateOilDrawingPlan } from '@/lib/engine1/oilGenerationService';
+import type { PortraitInput } from '@/lib/engine1/portraitEngine';
+import { RealPortraitEngine } from '@/lib/engine1/realPortraitEngine';
+
+export const runtime = 'nodejs';
+
+export async function resolvePlan(input: PortraitInput, opts: { mock: boolean }): Promise<OilDrawingPlan> {
+  if (opts.mock) return OIL_FIXTURE;
+  return generateOilDrawingPlan(input, new RealPortraitEngine());
+}
+```
+
+- [ ] **Step 3: `lib/flow.ts`** — retype the plan field:
+```ts
+import type { OilDrawingPlan } from './drawing/oilTypes';
+// AppState.plan:
+  plan: OilDrawingPlan | null;
+```
+
+- [ ] **Step 4: `app/page.tsx`** — import the v2 type and use it where `DrawingPlan` was (the `Preparing` `onReady` param and the `res.json()` cast):
+```ts
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
+// Preparing props:  onReady: (plan: OilDrawingPlan) => void;
+// inside Preparing:  const plan = (await res.json()) as OilDrawingPlan;
+```
+(The `state.step === 'performance'` block already passes `state.plan` to `EaselScreen` — unchanged.)
+
+- [ ] **Step 5: `components/EaselScreen.tsx`** — render `OilPerformance`:
+```tsx
+'use client';
+import OilPerformance from './OilPerformance';
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
+
+export default function EaselScreen({ plan, onDone }: { plan: OilDrawingPlan; onDone: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-6 py-10">
+      <p className="text-xs tracking-[0.2em] text-[var(--gold)]">THE ARTIST IS DRAWING…</p>
+      <div className="rounded-sm border-[10px] border-[var(--wood)] bg-[var(--canvas)] shadow-2xl">
+        <OilPerformance plan={plan} onDone={onDone} />
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 6: `components/ResultView.tsx`** — type only (download/display still `colorImage`; changed in M5.2):
+```tsx
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
+// props:  plan: OilDrawingPlan;
+```
+
+- [ ] **Step 7: Verify** — update affected tests (Step 1); `npm test` green; `npx tsc --noEmit` shows only the 4 pre-existing errors; `npm run build` clean (the app now renders the oil engine). v1 code/tests remain green (still present).
+- [ ] **Step 8: Commit** — `git commit -m "feat(oil): switch app flow onto the oil engine (route/screens/result)"`
+
+---
+
+#### Task M5.2: souvenir = painted-canvas snapshot
+
+**Files (modify):** `components/OilPerformance.tsx` (+test), `lib/flow.ts`, `app/page.tsx`, `components/EaselScreen.tsx`, `components/ResultView.tsx` (+test).
+
+- [ ] **Step 1: `OilPerformance.tsx`** — capture the canvas at done, hand it to `onDone`:
+```tsx
+interface Props { plan: OilDrawingPlan; onDone: (snapshot: string) => void; }
+// ...replace the done block in tick():
+      if (s.phase === 'done') {
+        if (!doneRef.current) {
+          doneRef.current = true;
+          // Souvenir is clean by construction: hand <img> + SVG sketch are sibling DOM nodes, never
+          // drawn into this <canvas>; the hand is lifted (opacity 0, set above) at done. So toBlob()
+          // captures ONLY strokes+ground. (photoGlaze>0 would drawImage(colorImage) → taint → toBlob
+          // throws; default photoGlaze=0 avoids it.)
+          if (canvas) canvas.toBlob((blob) => onDone(blob ? URL.createObjectURL(blob) : ''));
+          else onDone('');
+        }
+        return;
+      }
+```
+(`/dev/oil`'s `onDone={() => {}}` still satisfies `(s: string) => void` — fewer params is fine.)
+
+- [ ] **Step 2: `lib/flow.ts`** — carry the snapshot:
+```ts
+// AppState: add  snapshot: string | null;
+// INITIAL_STATE: add  snapshot: null,
+```
+
+- [ ] **Step 3: `app/page.tsx` + `components/EaselScreen.tsx`** — thread the snapshot through:
+```tsx
+// EaselScreen props:  onDone: (snapshot: string) => void;   (passes through to OilPerformance)
+// page.tsx performance step:
+  <EaselScreen plan={state.plan} onDone={(snapshot) => advance({ snapshot })} />
+// page.tsx result step:
+  <ResultView plan={state.plan} snapshot={state.snapshot ?? ''} config={state.config} onRestart={() => setState(INITIAL_STATE)} />
+```
+
+- [ ] **Step 4: `components/ResultView.tsx`** — download + display the snapshot, not the AI image:
+```tsx
+export default function ResultView({ plan, snapshot, config, onRestart }: {
+  plan: OilDrawingPlan; snapshot: string; config: { team: string; player?: string }; onRestart: () => void;
+}) {
+  function download() {
+    const a = document.createElement('a');
+    a.href = snapshot;                       // the PAINTED canvas, NEVER plan.colorImage
+    a.download = 'drawmyai-portrait.png';
+    a.click();
+  }
+  // ...share() unchanged...
+  // display: <img src={snapshot} alt="Your portrait" style={{ width: plan.width, height: plan.height }} />
+}
+```
+
+- [ ] **Step 5: Tests.**
+  - `ResultView.test.tsx` (create/update) — the heartbeat: render with a `snapshot` prop (e.g. `'blob:fake'`) and a `plan` whose `colorImage` is a DISTINCT sentinel; click Download → assert the created anchor's `href === 'blob:fake'` and `download === 'drawmyai-portrait.png'`; assert the displayed `<img>` `src === 'blob:fake'` (NOT `plan.colorImage`). This pins "souvenir = the snapshot, never the AI image."
+  - `OilPerformance.test.tsx` — keep the existing structural test green (its `onDone={() => {}}` still typechecks). The done→`toBlob`→`onDone(url)` capture is **verified by the reviewer via code-read** (capture sits inside the `phase==='done'` block, after the hand opacity→0, on the canvas that never holds the hand) **and by the manual gate** — jsdom has no real `toBlob`/canvas raster, so a forced-done canvas test would be brittle; do NOT add one.
+- [ ] **Step 6: Verify** (`npm test` green; tsc only the 4 known; build clean) **& Commit** — `git commit -m "feat(oil): souvenir = painted-canvas toBlob snapshot (never the AI image)"`
+
+---
+
+#### Task M5.3: delete the v1 reveal path + reconcile tests
+
+**Files:** delete v1 modules + tests; trim `derive.ts` and `types.ts`; fix the one v1-referencing oil test.
+
+- [ ] **Step 1: Sweep** — `rg -n "generateDrawingPlan|deriveShading|deriveBrushStrokesFromBuffer|brushStrokes|shadingLayer|WORLD_CUP_FIXTURE|DrawingPerformance|performanceScheduler|computeRenderState|\\bBrushStroke\\b|\\bRenderState\\b|\\bDrawingPhase\\b|\\bDrawingPlanTiming\\b|\\bDrawingPlan\\b"` across the repo. Every hit is an edit/delete site; reconcile each below (and any extra the sweep surfaces, e.g. `realMode.integration.test.ts`).
+
+- [ ] **Step 2: Delete v1 files** (module + test):
+  - `components/DrawingPerformance.tsx` + `components/DrawingPerformance.test.tsx`
+  - `lib/drawing/performanceScheduler.ts` + `lib/drawing/performanceScheduler.test.ts`
+  - `lib/engine1/brushStrokes.ts` + `lib/engine1/brushStrokes.test.ts`
+  - `lib/drawing/fixtures.ts` (`WORLD_CUP_FIXTURE`) + `lib/drawing/fixtures.test.ts`
+  - `lib/engine1/generationService.ts` (v1; uses brushStrokes + shading) + `lib/engine1/generationService.test.ts`
+
+- [ ] **Step 3: Trim `lib/engine1/derive.ts`** — delete `deriveShadingFromBuffer` and `deriveShading`; **KEEP** `deriveLineArtFromBuffer` and `deriveLineArt` (the oil service uses line-art). In `lib/engine1/derive.test.ts`, remove the shading tests, keep the line-art tests.
+
+- [ ] **Step 4: Trim `lib/drawing/types.ts`** — delete `DrawingPlan`, `BrushStroke`, `RenderState`, `DrawingPhase`, `DrawingPlanTiming` (all now import-orphaned by M5.1 + the deletions above). **KEEP `StrokePath`** (imported by `oilTypes.ts`).
+
+- [ ] **Step 5: Fix `lib/engine1/oilGenerationService.test.ts`** — remove `import { generateDrawingPlan } from './generationService'` and the test `'leaves the v1 generateDrawingPlan importable/working (untouched)'` (its subject is deleted).
+
+- [ ] **Step 6: `/dev/oil`** — LEAVE as-is (dev-only harness, useful for M4 tuning; not in the user flow). Optional later cleanup, not part of M5.
+
+- [ ] **Step 7: Verify** — the Step-1 sweep now returns ZERO references to the deleted symbols outside comments; `npm test` green (the suite COUNT drops as v1 tests are removed — expected); `npx tsc --noEmit` shows only the 4 pre-existing errors in `realPortraitEngine.test.ts` (deletions must not add new ones); `npm run build` clean.
+- [ ] **Step 8: Commit** — `git commit -m "feat(oil): delete v1 reveal path (DrawingPerformance/scheduler/brushStrokes/shading/fixture) + reconcile tests"`
+
+- [ ] **Step 9: MANUAL look-review (the user's gate, queued):** `npm run dev` → capture/upload → pick team → watch the **oil** performance paint coarse→fine → at the end, **Download** → confirm the saved `drawmyai-portrait.png` is the **painted canvas** (bristle strokes, no hand, no flat AI image), the result screen shows that painting, and **no v1 reveal/shading** appears anywhere.
+
+**M5 EXIT CRITERIA:** the real app flow performs the oil engine end-to-end; the souvenir is the painted snapshot (never the AI image); no v1 reveal/shading/brushStrokes code remains; `npm test` + `npx tsc --noEmit` (only the 4 known) + `npm run build` all green; manual look-review passes. *(Rename `OilDrawingPlan`→`DrawingPlan` intentionally deferred — see notes.)*
 
 ---
 
