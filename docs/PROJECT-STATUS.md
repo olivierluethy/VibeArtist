@@ -4,8 +4,8 @@
 > (including a fresh AI session) can read this one file and immediately understand the project,
 > what's done, what's left, and exactly how to do the next step.
 >
-> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 46 passing (17 files) · **Build:** clean
-> *(Note: an earlier snapshot said "39"; the go-live commits added tests — real baseline is 46. `npx tsc --noEmit` also surfaces 4 pre-existing type errors in `lib/engine1/realPortraitEngine.test.ts` that `next build` doesn't catch — latent, tracked for cleanup.)*
+> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 94 passing (25 files) · **Build:** clean
+> *(`npx tsc --noEmit` surfaces 4 pre-existing type errors in `lib/engine1/realPortraitEngine.test.ts` that `next build` doesn't catch — latent, tracked for cleanup. Also: `onnxruntime-node` install flagged 9 moderate npm-audit vulnerabilities — do NOT `npm audit fix --force`; deferred to final review.)*
 >
 > **Latest / CURRENT DIRECTION (2026-06-24):** the **painting-engine redesign** is the active work
 > (Engine 2's color renderer is being rebuilt as a true oil stroke-based engine — 100% strokes, no
@@ -17,7 +17,7 @@
 
 ## 0. ⭐ Active work — Painting Engine Redesign (read this first)
 
-**Status:** design approved; implementation not yet started. **Decoupled-first, milestones M0→M5.**
+**Status (2026-06-24):** **M0–M2 COMPLETE** (v2 contract + scheduler, renderer on static fixture, server-side stroke derivation) and **M3 offline COMPLETE** (faceBox geometry + non-blocking detect seam + wiring). **M3.4 BlazeFace detector is PARKED** (see "🅿️ PARKED" below). **M5 is next** — switch the app onto the oil engine + delete v1; it is **detector-independent** (the faceBox seam returns `null` → pure detail-driven). 94 tests green, build clean. **Decoupled-first, milestones M0→M5.**
 
 - **Spec (authoritative):** `docs/superpowers/specs/2026-06-23-painting-engine-redesign-design.md`
 - **Plan:** `docs/superpowers/plans/2026-06-23-painting-engine-redesign.md` (M0–M1 fully detailed; M2–M5 scoped)
@@ -29,17 +29,31 @@ strokes, coarse→fine, with a dedicated eyes/mouth pass — and **deletes the p
 layer**. Final canvas is **100% strokes**; the **souvenir is the painted-canvas `toBlob()` snapshot**, not
 the AI image. Detail-map + BlazeFace face detection live **server-side**; the browser stays a dumb performer.
 
-**Build order (additive until M5, so the 46 existing tests stay green throughout):**
-- **M0** — v2 contract (`oilTypes.ts`) + pacing scheduler (`oilScheduler.ts`, fixed Layer-4 reserved tail).
-- **M1** — renderer on a **static fixture** (`oilBrush.ts`, `oilFixture.ts`, `OilPerformance.tsx`, `/dev/oil`) — nails the look with zero AI.
-- **M2** — server derivation (`oilStrokes.ts`, `oilGenerationService.ts`).
-- **M3** — face targeting (`faceBox.ts`, BlazeFace via `onnxruntime-node`).
-- **M4** — choreography polish (pacing/tool tuning).
-- **M5** — switch app flow to the oil engine, export painted snapshot, delete v1 (`DrawingPerformance`,
-  `performanceScheduler`, `brushStrokes`, shading), rename `OilDrawingPlan`→`DrawingPlan`.
+**Build order (additive until M5, so the existing tests stay green throughout):**
+- ✅ **M0 DONE** — v2 contract (`oilTypes.ts`) + pacing scheduler (`oilScheduler.ts`, fixed Layer-4 reserved tail).
+- ✅ **M1 DONE** — renderer on a **static fixture** (`oilBrush.ts`, `oilFixture.ts`, `OilPerformance.tsx`, `/dev/oil`) — nails the look with zero AI.
+- ✅ **M2 DONE** — server derivation (`oilStrokes.ts`: orientation field + 6 layers + budget; `oilGenerationService.ts`).
+- 🟡 **M3 — offline DONE, detector PARKED.** `faceBox.ts` (geometry + non-blocking seam) + wiring done; **M3.4 (BlazeFace runner + 896-anchor decode) is parked** — see below.
+- ⬜ **M4** — choreography polish (pacing/tool tuning). *Best done against real generated portraits (needs go-live or M3.4); can also tune on the fixture.*
+- ⬜ **M5 (NEXT)** — switch app flow to the oil engine, export painted snapshot, delete v1 (`DrawingPerformance`, `performanceScheduler`, `brushStrokes`, shading), rename `OilDrawingPlan`→`DrawingPlan`. **Detector-independent** (faceBox seam stays, returns `null`).
 
-> §1–§5 below describe the **current (v1) engine that is being replaced** — accurate for what's on `master`
-> today, but the color/shading/blend parts are slated for removal in M5. §6 (go-live) is **paused** behind this.
+### 🅿️ PARKED — M3.4 BlazeFace face targeting (deferred enhancement)
+
+**Decision (2026-06-24):** M3.4 (the real BlazeFace detector) is **parked, not cancelled.** The redesign's original goal — repaint the portrait stroke-by-stroke instead of revealing the AI image — is delivered by M0–M2 + M5 **without** it. BlazeFace adds only a *dedicated eyes/mouth refinement pass* (slightly sharper likeness); the engine's **non-blocking fallback** (built + tested in M3.1–M3.3) degrades cleanly to pure detail-driven when no detector is present, so the app paints correctly without it. The 896-anchor SSD decode is the heaviest single piece in the project for the smallest gain — deferred until that sharpness is worth the cost.
+
+**What it adds when resumed:** a dedicated, dense Layer-4 stroke pass confined to the eyes/mouth sub-region (spec §1.5) — crisper, more identity-bearing eyes and mouth-line.
+
+**Already in place (the seam is live, returning null):**
+- `onnxruntime-node@1.24.3` is **already installed** (CPU-only, `--onnxruntime-node-install=skip`).
+- `lib/engine1/faceBox.ts`: `toFaceBox(raw, dispW, dispH)` (normalized→display scale + eyes/mouth Rect span, `⊆ box` invariant) and `detectFaceBox(buf, dispW, dispH, runner?)` with an unwired `defaultRunner` that throws → caught → `null`. Wired into `generateOilDrawingPlan` via DI; currently always returns `null` → pure detail-driven. Fully unit-tested incl. the partial-degrade (box-but-no-eyesMouth) variant.
+
+**To resume (M3.4):**
+1. **Obtain + commit the model** — `blaze_face_short_range.onnx` from `unity/inference-engine-blaze-face` (HuggingFace), **Apache-2.0** (model-card YAML tag; no standalone LICENSE file — recorded caveat), ~418 KB. URL: `https://huggingface.co/unity/inference-engine-blaze-face/resolve/main/models/blaze_face_short_range.onnx` → `lib/engine1/models/blazeface.onnx` (+ source/license/sha256 in `models/README.md`). Constraint: model license MUST stay **Apache-2.0 or MIT**.
+2. **Real runner** in `faceBox.ts` (replace `defaultRunner`): jimp resize → **128×128 NHWC**, normalize **`pixel/127.5 - 1` → [-1,1]**, `ort.InferenceSession` run → output `(1,896,16)` regressors + `(1,896,1)` pre-sigmoid scores.
+3. **⚠️ The 896-anchor SSD decode + NMS** (the heavy piece, still TO BE WRITTEN): generate the 896 anchors (strides 8/16 over 128×128), sigmoid scores + threshold, anchor-decode boxes+keypoints, NMS; keypoints `0 R-eye, 1 L-eye, 2 nose, 3 mouth` → normalized `RawDetection`.
+4. **Verify on a real face** (the model is not unit-tested; inference needs no network, so it can run locally once the model is committed).
+
+> §1–§5 below describe the **current (v1) engine being replaced** — accurate for `master` today, but the color/shading/blend parts are removed in M5. §6 (go-live) is **paused** behind this.
 
 ---
 
