@@ -4,7 +4,8 @@
 > (including a fresh AI session) can read this one file and immediately understand the project,
 > what's done, what's left, and exactly how to do the next step.
 >
-> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 94 passing (25 files) · **Build:** clean
+> **Last updated:** 2026-06-24 · **Branch:** `master` · **Tests:** 75 passing (20 files) · **Build:** clean
+> *(Test count dropped 94→75 in M5.3 — v1 reveal-path coverage was removed with the v1 code, by design.)*
 > *(`npx tsc --noEmit` surfaces 4 pre-existing type errors in `lib/engine1/realPortraitEngine.test.ts` that `next build` doesn't catch — latent, tracked for cleanup. Also: `onnxruntime-node` install flagged 9 moderate npm-audit vulnerabilities — do NOT `npm audit fix --force`; deferred to final review.)*
 >
 > **Latest / CURRENT DIRECTION (2026-06-24):** the **painting-engine redesign** is the active work
@@ -17,7 +18,9 @@
 
 ## 0. ⭐ Active work — Painting Engine Redesign (read this first)
 
-**Status (2026-06-24):** **M0–M2 COMPLETE** (v2 contract + scheduler, renderer on static fixture, server-side stroke derivation) and **M3 offline COMPLETE** (faceBox geometry + non-blocking detect seam + wiring). **M3.4 BlazeFace detector is PARKED** (see "🅿️ PARKED" below). **M5 is next** — switch the app onto the oil engine + delete v1; it is **detector-independent** (the faceBox seam returns `null` → pure detail-driven). 94 tests green, build clean. **Decoupled-first, milestones M0→M5.**
+**Status (2026-06-24):** **M0–M2 + M3-offline + M5 are CODE-COMPLETE.** The **oil engine is now the app default**: the route serves an `OilDrawingPlan` (mock = `OIL_FIXTURE`, real = `generateOilDrawingPlan` → detail-driven via the null-detector fallback), `OilPerformance` paints it on an accumulating bitmap, and the **souvenir is the painted-canvas `toBlob()` PNG — never the AI image**. The **v1 reveal path is DELETED** (`DrawingPerformance`, `performanceScheduler`, `brushStrokes`, shading derivation, `WORLD_CUP_FIXTURE`, v1 `generationService`, v1 types). **M3.4 BlazeFace is PARKED** (see "🅿️ PARKED"); **M4 (choreography polish) not started.** 75 tests green, tsc 4 pre-existing only, build clean. ⏳ **One gate remains: the human manual look-review** (`npm run dev` → watch the oil performance → Download → confirm the PNG is the painting, no hand/no AI image, no v1 reveal). `OilDrawingPlan`→`DrawingPlan` rename intentionally deferred.
+>
+> *(§1–§6 below still describe the now-DELETED v1 engine — they are STALE post-M5 and need a full refresh; kept temporarily for history.)*
 
 - **Spec (authoritative):** `docs/superpowers/specs/2026-06-23-painting-engine-redesign-design.md`
 - **Plan:** `docs/superpowers/plans/2026-06-23-painting-engine-redesign.md` (M0–M1 fully detailed; M2–M5 scoped)
