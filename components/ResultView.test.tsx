@@ -45,8 +45,9 @@ describe('ResultView', () => {
 
     // 2. Clicking Download sets the anchor to snapshot, not plan.colorImage.
     fireEvent.click(screen.getByRole('button', { name: /download/i }));
-    expect(anchor.href).toBe(SNAPSHOT);
+    // getAttribute('href') returns the raw assigned string (bypasses jsdom URL normalization of blob: URLs).
+    expect(anchor.getAttribute('href')).toBe(SNAPSHOT);
     expect(anchor.download).toBe('drawmyai-portrait.png');
-    expect(anchor.href).not.toBe(PLAN_WITH_SENTINEL.colorImage);
+    expect(anchor.getAttribute('href')).not.toBe(PLAN_WITH_SENTINEL.colorImage);
   });
 });
