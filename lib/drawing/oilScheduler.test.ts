@@ -40,6 +40,14 @@ describe('computeOilState', () => {
     expect(s.tool).toBe('brushBig');
   });
 
+  it('quantizes with floor: a half-revealed stroke is NOT yet counted as drawn', () => {
+    // t=1250: 1/4 through block-in (1000..2000), c0=2 => drawnRaw = 0.25*2 = 0.5.
+    // floor(0.5)=0 (plan-faithful: a stroke counts only once fully reached); Math.round would give 1.
+    const s = computeOilState(plan, 1250);
+    expect(s.phase).toBe('blockIn');
+    expect(s.oilDrawn).toBe(0);
+  });
+
   it('reserves a FIXED Layer-4 tail: at the end of the bulk window, layer-4 has not started', () => {
     // refine spans 2000..8000 (6000ms). effective reserve = min(6000*0.4, LAYER4_RESERVE_MS) = 2400.
     const reserve = Math.min(plan.timing.refineMs * 0.4, LAYER4_RESERVE_MS);
