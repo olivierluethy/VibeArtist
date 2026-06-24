@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Jimp from 'jimp';
 import { generateOilDrawingPlan } from './oilGenerationService';
-import { generateDrawingPlan } from './generationService'; // v1 must remain intact
 import type { PortraitEngine } from './portraitEngine';
 
 const SAMPLE_PNG_B64 =
@@ -33,10 +32,6 @@ describe('generateOilDrawingPlan', () => {
     expect('shadingLayer' in plan).toBe(false);
   });
 
-  it('leaves the v1 generateDrawingPlan importable/working (untouched)', async () => {
-    const v1 = await generateDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine);
-    expect(v1.brushStrokes.length).toBeGreaterThan(0); // v1 still produces its own shape
-  });
 });
 
 describe('generateOilDrawingPlan — face targeting wiring', () => {

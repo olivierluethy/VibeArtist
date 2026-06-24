@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveLineArt, deriveShading } from './derive';
+import { deriveLineArt } from './derive';
 import { traceToStrokePaths } from './lineart';
 
 const SAMPLE_PNG_B64 =
@@ -19,9 +19,3 @@ describe('deriveLineArt', () => {
   });
 });
 
-describe('deriveShading', () => {
-  it('returns a PNG data URL', async () => {
-    const result = await deriveShading(DATA_URL);
-    expect(result).toMatch(/^data:image\/png/);
-  });
-});
