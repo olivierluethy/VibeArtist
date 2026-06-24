@@ -1569,11 +1569,242 @@ export async function generateOilDrawingPlan(
 
 **M2 EXIT CRITERIA:** `generateOilDrawingPlan` produces a valid layer-ordered `OilDrawingPlan` from a real image buffer with zero AI cost on the fixture path; the orientation field + 6 layers are unit-tested and deterministic; v1 generation is untouched; suite + tsc green. (Likeness is still detail-only — the dedicated eyes/mouth pass activates once M3 supplies a real `faceBox`.)
 
-### M3 — face targeting
+### M3 — face targeting  *(EXPANDED 2026-06-24, offline/network split)*
 
-**Task 12 — add dependency.** `npm i onnxruntime-node` + a BlazeFace model asset (record exact version + license in the task). Commit lockfile.
+> **Expansion notes (reality-pinned; decisions locked with the user):**
+> - **Offline/network split (decoupled-first):** `onnxruntime-node` (native binaries) and the BlazeFace weights both need network, which is OFF in this env. So the buildable+testable architecture (geometry, seam, fallback, wiring) is Tasks **M3.1–M3.3 (offline, run now)**, and the real-model integration is Task **M3.4 (NETWORK-GATED — do NOT run here)**. Offline, detection always falls back to `null` ⇒ pure detail-driven (the locked non-blocking fallback) — and that fallback is *pinned by tests offline*, not "once the model runs."
+> - **`onnxruntime-node` version: pinned `1.24.3`** (battle-tested; latest 1.27.0 is days old and unverifiable offline). T13 is fully specified — a failed install is a deliberate escalation, not a TODO.
+> - **Model LICENSE constraint (LOCKED): the committed `.onnx` weight MUST be Apache-2.0 or MIT.** Unspecified-license models (incl. `manthi4/End-to-end-BlazeFace-Onnx`) are EXCLUDED. The *concrete* clean-license model instance (e.g. unity/sentis Apache-2.0, PINTO zoo MIT) is chosen at M3.4 when real inference can verify decoding. Default plan: clean-license raw model + write SSD anchor-decode + NMS. A clearly-licensed end-to-end model is allowed if found (still meets the constraint).
+> - **BlazeFace I/O (researched):** input `(1,3,128,128)` NCHW RGB `/255`; output 0 `[N,16]` = 4 bbox + 6 keypoints×(y,x), keypoint order **0=LeftEye, 1=RightEye, 2=Nose, 3=Mouth**, 4/5=cheeks; coords normalized [0,1]. Weights ~400 KB (commit to repo, server-side, no LFS, **no runtime download**).
+> - **Coordinate contract:** the offline tasks work against a `RawDetection` abstraction (normalized [0,1] box + keypoints) — independent of the concrete model. `toFaceBox` scales normalized → **display coords** (the space `deriveOilStrokesFromBuffer`'s `faceBox` consumes) and spans the eyes/mouth Rect.
+> - **Signature deviation (approved):** `detectFaceBox(buf, dispW, dispH, runner?)` — takes display dims and returns a display-coord `FaceBox`, so coordinate responsibility lives at the detector, not the caller. (Plan originally wrote `detectFaceBox(buf)`.)
+> - **Baseline: 84 green** at M2 end. Each offline task is additive + gated (all tests green, no new tsc errors, independent review, stop for review). `FaceBox`/`Rect` are imported from `oilStrokes.ts` (the M2 export).
 
-**Task 13 — `lib/engine1/faceBox.ts` (+ test).** `detectFaceBox(buf: Buffer): Promise<FaceBox | null>` where `FaceBox = { box: {x,y,w,h}; eyesMouth?: {x,y,w,h} }`. Spans `eyesMouth` from BlazeFace's **coarse keypoints** (eyes, nose, mouth) — no precise contours. On any error/miss → `null`. Wire into `oilGenerationService` (call `detectFaceBox`, pass result to `deriveOilStrokesFromBuffer`). Test: **mock the detector** to assert the seam — detector throws/returns null → `faceBox.ts` returns `null` and generation still produces a valid plan. The model itself is not unit-tested.
+---
+
+#### Task M3.1: face geometry — scale + eyes/mouth spanning (`faceBox.ts`, offline)
+
+**Files:** Create `lib/engine1/faceBox.ts`; Test `lib/engine1/faceBox.test.ts`.
+**Interfaces:** Consumes `FaceBox`/`Rect` (`./oilStrokes`). Produces `interface RawDetection { box: {x,y,w,h}; keypoints: {x,y}[] }` (normalized [0,1]); `toFaceBox(raw: RawDetection, dispW: number, dispH: number): FaceBox`.
+
+- [ ] **Step 1: Write the failing test**
+```ts
+import { describe, it, expect } from 'vitest';
+import { toFaceBox, type RawDetection } from './faceBox';
+
+const raw: RawDetection = {
+  box: { x: 0.25, y: 0.2, w: 0.5, h: 0.6 },
+  keypoints: [ { x: 0.4, y: 0.4 }, { x: 0.6, y: 0.4 }, { x: 0.5, y: 0.5 }, { x: 0.5, y: 0.65 } ], // L eye, R eye, nose, mouth
+};
+
+describe('toFaceBox', () => {
+  it('scales the normalized face box to display coords', () => {
+    const fb = toFaceBox(raw, 400, 500);
+    expect(fb.box.x).toBeCloseTo(100); expect(fb.box.y).toBeCloseTo(100);
+    expect(fb.box.w).toBeCloseTo(200); expect(fb.box.h).toBeCloseTo(300);
+  });
+  it('spans the EXACT eyes/mouth Rect from keypoints, clamped inside the face box (⊆ box invariant)', () => {
+    const fb = toFaceBox(raw, 400, 500);
+    const em = fb.eyesMouth!;
+    // display pts: L-eye(160,200) R-eye(240,200) nose(200,250) mouth(200,325) → span x160..240 y200..325;
+    // +25% pad → x140..260 y168.75..356.25; clamped into box(100..300 × 100..400):
+    expect(em.x).toBeCloseTo(140);  expect(em.y).toBeCloseTo(168.75);
+    expect(em.w).toBeCloseTo(120);  expect(em.h).toBeCloseTo(187.5);
+    // INVARIANT: eyesMouth ⊆ box (else the dedicated layer-4 pass would paint OUTSIDE the face)
+    expect(em.x).toBeGreaterThanOrEqual(fb.box.x);
+    expect(em.y).toBeGreaterThanOrEqual(fb.box.y);
+    expect(em.x + em.w).toBeLessThanOrEqual(fb.box.x + fb.box.w + 1e-6);
+    expect(em.y + em.h).toBeLessThanOrEqual(fb.box.y + fb.box.h + 1e-6);
+  });
+  it('omits eyesMouth when fewer than 4 keypoints', () => {
+    expect(toFaceBox({ box: raw.box, keypoints: [{ x: 0.5, y: 0.5 }] }, 400, 500).eyesMouth).toBeUndefined();
+  });
+});
+```
+- [ ] **Step 2: Run → FAIL (module missing).**
+- [ ] **Step 3: Implement**
+```ts
+import type { FaceBox, Rect } from './oilStrokes';
+
+/** A raw face detection in NORMALISED [0,1] coords (the model's output space). */
+export interface RawDetection {
+  box: { x: number; y: number; w: number; h: number };
+  keypoints: { x: number; y: number }[]; // order: 0 left-eye, 1 right-eye, 2 nose, 3 mouth, 4/5 cheeks
+}
+
+const EM_PAD = 0.25; // pad the eyes/mouth span by 25% of its extent
+
+/** Scale a normalised detection to DISPLAY coords; span the eyes/mouth sub-region from keypoints 0–3. */
+export function toFaceBox(raw: RawDetection, dispW: number, dispH: number): FaceBox {
+  const box: Rect = { x: raw.box.x * dispW, y: raw.box.y * dispH, w: raw.box.w * dispW, h: raw.box.h * dispH };
+  const kp = raw.keypoints;
+  if (kp.length < 4) return { box };
+  const pts = [kp[0], kp[1], kp[2], kp[3]].map((p) => ({ x: p.x * dispW, y: p.y * dispH }));
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  let minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const padX = (maxX - minX) * EM_PAD, padY = (maxY - minY) * EM_PAD;
+  minX -= padX; maxX += padX; minY -= padY; maxY += padY;
+  const x = Math.max(box.x, minX), y = Math.max(box.y, minY);
+  const eyesMouth: Rect = { x, y, w: Math.min(box.x + box.w, maxX) - x, h: Math.min(box.y + box.h, maxY) - y };
+  return { box, eyesMouth };
+}
+```
+- [ ] **Step 4: Run → PASS. Step 5: full suite + tsc. Step 6:** `git commit -m "feat(oil): faceBox geometry — normalized→display scale + eyes/mouth spanning"`
+
+---
+
+#### Task M3.2: detect seam + non-blocking fallback (`faceBox.ts`, offline)
+
+**Files:** Modify `lib/engine1/faceBox.ts` + its test.
+**Interfaces:** Produces `type FaceModelRunner = (buf: Buffer) => Promise<RawDetection | null>`; `detectFaceBox(buf: Buffer, dispW: number, dispH: number, runner?: FaceModelRunner): Promise<FaceBox | null>`.
+
+- [ ] **Step 1: Add failing tests**
+```ts
+import { detectFaceBox } from './faceBox';
+describe('detectFaceBox (seam + non-blocking fallback)', () => {
+  const buf = Buffer.from('x');
+  it('runner throws → null (never blocks generation)', async () => {
+    expect(await detectFaceBox(buf, 400, 500, async () => { throw new Error('boom'); })).toBeNull();
+  });
+  it('runner finds no face → null', async () => {
+    expect(await detectFaceBox(buf, 400, 500, async () => null)).toBeNull();
+  });
+  it('runner detects a face → scaled FaceBox with eyesMouth', async () => {
+    const fb = await detectFaceBox(buf, 400, 500, async () => raw);
+    expect(fb).not.toBeNull(); expect(fb!.box.w).toBeCloseTo(200); expect(fb!.eyesMouth).toBeDefined();
+  });
+  it('the DEFAULT (unwired) runner makes detection fall back to null — offline-safe', async () => {
+    expect(await detectFaceBox(buf, 400, 500)).toBeNull(); // defaultRunner throws → caught → null
+  });
+});
+```
+- [ ] **Step 2: Run → the seam tests FAIL.**
+- [ ] **Step 3: Implement** (append to `faceBox.ts`)
+```ts
+export type FaceModelRunner = (buf: Buffer) => Promise<RawDetection | null>;
+
+/** Real BlazeFace inference is wired in the network-gated task (M3.4). Until then this throws,
+ *  so detectFaceBox falls back to null and derivation stays pure detail-driven. NO onnxruntime import here. */
+const defaultRunner: FaceModelRunner = async () => {
+  throw new Error('faceBox: BlazeFace runner not wired (M3.4 — needs onnxruntime-node@1.24.3 + a clean-license model)');
+};
+
+/** Server-side face detection. NON-BLOCKING: any failure (missing model, throw, no face) → null. */
+export async function detectFaceBox(
+  buf: Buffer, dispW: number, dispH: number, runner: FaceModelRunner = defaultRunner,
+): Promise<FaceBox | null> {
+  try {
+    const raw = await runner(buf);
+    return raw ? toFaceBox(raw, dispW, dispH) : null;
+  } catch {
+    return null;
+  }
+}
+```
+- [ ] **Step 4: Run → PASS. Step 5: full suite + tsc. Step 6:** `git commit -m "feat(oil): detectFaceBox seam — non-blocking null fallback (model unwired)"`
+
+---
+
+#### Task M3.3: wire detection into `generateOilDrawingPlan` (offline)
+
+**Files:** Modify `lib/engine1/oilGenerationService.ts` + its test.
+**Interfaces:** `generateOilDrawingPlan(input, engine, deps?: { detectFaceBox?: typeof detectFaceBox }): Promise<OilDrawingPlan>` (detector dependency-injected for tests).
+
+- [ ] **Step 1: Add failing tests** (to `oilGenerationService.test.ts`)
+```ts
+import { generateOilDrawingPlan } from './oilGenerationService';
+// fakeEngine returns an 80×80 image (existing in the file)
+describe('generateOilDrawingPlan — face targeting wiring', () => {
+  it('emits a layer-4 eyes/mouth pass when the detector returns a faceBox with eyesMouth', async () => {
+    const detectFaceBox = async () => ({ box: { x: 0, y: 0, w: 80, h: 80 }, eyesMouth: { x: 0, y: 0, w: 80, h: 80 } });
+    const plan = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine, { detectFaceBox });
+    expect(plan.oilStrokes.some((s) => s.layer === 4)).toBe(true);
+  });
+  it('falls back to a valid detail-driven plan (no layer 4) when the detector returns null', async () => {
+    const detectFaceBox = async () => null;
+    const plan = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine, { detectFaceBox });
+    expect(plan.oilStrokes.length).toBeGreaterThan(0);
+    expect(plan.oilStrokes.some((s) => s.layer === 4)).toBe(false);
+  });
+
+  // Section-3 PARTIAL degrade: a face is found but eyes/mouth aren't reliably spannable (toFaceBox
+  // returned { box } with no eyesMouth). Must NOT error and must NOT skip the box-boost — only the
+  // dedicated layer-4 pass is skipped. (Requires `import Jimp from 'jimp'` at the top of this test file.)
+  it('faceBox with box but NO eyesMouth → no layer 4, box-boost STILL applies, plan valid', async () => {
+    const img = await Jimp.create(128, 160); // gradient ⇒ band-crossing cells so the boost is observable (as in M2 T9)
+    for (let y = 0; y < 160; y++) for (let x = 0; x < 128; x++) {
+      const v = Math.round((x / 127) ** 2 * 255); img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+    }
+    const url = 'data:image/png;base64,' + (await img.getBufferAsync(Jimp.MIME_PNG)).toString('base64');
+    const gradEngine: PortraitEngine = { async generate() { return { colorImage: url, width: 400, height: 500 }; } };
+    const l23 = (p: { oilStrokes: { layer: number }[] }) => p.oilStrokes.filter((s) => s.layer === 2 || s.layer === 3).length;
+    const planNull = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, gradEngine, { detectFaceBox: async () => null });
+    const planBox = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, gradEngine, { detectFaceBox: async () => ({ box: { x: 0, y: 0, w: 400, h: 500 } }) }); // box, NO eyesMouth
+    expect(planBox.oilStrokes.some((s) => s.layer === 4)).toBe(false); // eyesMouth absent → no dedicated pass
+    expect(planBox.oilStrokes.length).toBeGreaterThan(0);              // plan still valid
+    expect(l23(planBox)).toBeGreaterThan(l23(planNull));               // box-boost STILL applies
+  });
+});
+```
+- [ ] **Step 2: Run → the new tests FAIL (faceBox not wired; layer 4 never emitted).**
+- [ ] **Step 3: Implement** — modify `generateOilDrawingPlan`:
+```ts
+import { detectFaceBox } from './faceBox';
+
+export interface OilGenDeps { detectFaceBox?: typeof detectFaceBox }
+
+export async function generateOilDrawingPlan(
+  input: PortraitInput, engine: PortraitEngine, deps: OilGenDeps = {},
+): Promise<OilDrawingPlan> {
+  const detect = deps.detectFaceBox ?? detectFaceBox;
+  const out = await engine.generate(input);
+  const buf = await loadImageBuffer(out.colorImage);
+  const lineArt = await deriveLineArtFromBuffer(buf);
+  const strokePaths = await traceToStrokePaths(lineArt);
+  const faceBox = await detect(buf, out.width, out.height);   // null offline (default runner unwired) → detail-driven
+  const oilStrokes = await deriveOilStrokesFromBuffer(buf, out.width, out.height, faceBox);
+  return { width: out.width, height: out.height, strokePaths, oilStrokes, colorImage: out.colorImage, timing: { ...OIL_TIMING } };
+}
+```
+> The existing M2 Task-11 tests still pass: with no `deps`, the default `detectFaceBox` hits the unwired stub → `null` → identical to the M2 `faceBox=null` behaviour.
+- [ ] **Step 4: Run → PASS. Step 5: full suite + tsc. Step 6:** `git commit -m "feat(oil): wire detectFaceBox into generateOilDrawingPlan (DI; null→detail-driven)"`
+
+**M3 OFFLINE EXIT:** the face-targeting seam, geometry, and wiring are built and unit-tested; the locked non-blocking fallback is proven OFFLINE (detector null/throw → valid detail-driven plan, no layer 4); suite + tsc green. The real detector is dark until M3.4.
+
+---
+
+#### Task M3.4: install ORT + commit model + real runner  *(⚠️ NETWORK-GATED — NOT runnable in this offline env)*
+
+> **Blocked on network.** Requires `npm install` (native binaries) and obtaining a model file — both need network, which is OFF here. Do NOT dispatch this in the offline env; execute when network is available (or the user runs the install via `! npm i ...`). No new tests gate it (the model is not unit-tested, per spec); verification is manual/integration on a real face.
+
+- [ ] **Step 1: Add the dependency (pinned).** `npm i onnxruntime-node@1.24.3 --onnxruntime-node-install=skip` (CPU-only; skip the heavy CUDA EP download). Commit `package.json` + `package-lock.json`. If the install snags, STOP and escalate (deliberate gate — do not silently downgrade or change the version).
+- [ ] **Step 2: Obtain + commit a CLEAN-LICENSE model.** Pick a model whose license is **Apache-2.0 or MIT** (e.g. unity/sentis Apache-2.0, PINTO zoo MIT). **Unspecified-license models are excluded** (this weight ships in the repo). Commit it to a server-side path: `lib/engine1/models/blazeface.onnx` (~400 KB; not `public/`; no runtime download). Record the exact source URL + license + sha256 in a sibling `models/README.md`.
+- [ ] **Step 3: Implement the real runner** in `faceBox.ts` — replace `defaultRunner`'s body (add `import * as ort from 'onnxruntime-node'` + `import Jimp from 'jimp'` + `import path from 'node:path'`):
+```ts
+const MODEL_PATH = path.join(process.cwd(), 'lib/engine1/models/blazeface.onnx');
+let sessionP: Promise<ort.InferenceSession> | null = null;
+const realRunner: FaceModelRunner = async (buf) => {
+  sessionP ??= ort.InferenceSession.create(MODEL_PATH, { executionProviders: ['cpu'] });
+  const session = await sessionP;
+  const img = (await Jimp.read(buf)).resize(128, 128);
+  const data = new Float32Array(3 * 128 * 128);
+  let p = 0;
+  for (let c = 0; c < 3; c++) for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    const px = Jimp.intToRGBA(img.getPixelColor(x, y));
+    data[p++] = (c === 0 ? px.r : c === 1 ? px.g : px.b) / 255;
+  }
+  const results = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, 128, 128]) });
+  const out0 = results[session.outputNames[0]].data as Float32Array; // [N,16]
+  // MODEL-DEPENDENT DECODE (filled in with the chosen model): if a RAW SSD model, apply anchor-decode + NMS
+  // here; if an end-to-end model, out0 is already decoded. Pick the top-confidence face, then return:
+  //   { box: {x,y,w,h}, keypoints: [{x,y}×6] }  — ALL normalised [0,1]  (or null if no face / score < threshold)
+  // Keypoint order: 0 L-eye, 1 R-eye, 2 nose, 3 mouth, 4/5 cheeks.
+  return /* decoded RawDetection | null */;
+};
+// set defaultRunner = realRunner (export-swap or rename) so detectFaceBox uses it by default.
+```
+- [ ] **Step 4: Verify (manual/integration).** Run generation on a real portrait; confirm a face is detected, `eyesMouth` lands on the actual eyes/mouth (display coords), and layer-4 strokes cluster there. Confirm fallback still holds (rename/remove the model → `detectFaceBox` returns null → valid detail-driven plan). Keep the offline seam tests green.
+- [ ] **Step 5: Commit** — `git commit -m "feat(oil): real BlazeFace runner (onnxruntime-node@1.24.3 + <model> <license>)"`
 
 ### M4 — choreography polish
 
