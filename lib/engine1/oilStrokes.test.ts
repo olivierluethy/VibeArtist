@@ -145,8 +145,15 @@ describe('deriveOilStrokesFromBuffer (layers 4–5, locality, budget)', () => {
     expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3, 4, 5])); // all six layers present with box + eyesMouth
   });
 
-  it('never exceeds the stroke budget', async () => {
-    const s = await deriveOilStrokesFromBuffer(await busyPng(256, 320), 400, 500, null);
-    expect(s.length).toBeLessThanOrEqual(4000);
+  it('caps at the stroke budget AND actually engages thinning (not a vacuous ≤4000)', async () => {
+    // A canvas-sized eyesMouth makes layer 4 (step 5) alone emit 80×100 = 8000 strokes,
+    // so the RAW count exceeds the 4000 cap and the thinning branch MUST run. (A plain
+    // null-faceBox source can stay under 4000, passing ≤4000 without ever thinning — vacuous.)
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, {
+      box: { x: 0, y: 0, w: 400, h: 500 },
+      eyesMouth: { x: 0, y: 0, w: 400, h: 500 },
+    });
+    expect(s.length).toBeLessThanOrEqual(4000); // cap enforced
+    expect(s.length).toBeGreaterThan(1000);     // sanity: thinning capped but didn't gut the plan
   });
 });
