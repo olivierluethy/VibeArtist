@@ -1571,23 +1571,23 @@ export async function generateOilDrawingPlan(
 
 ### M3 — face targeting
 
-**Task 9 — add dependency.** `npm i onnxruntime-node` + a BlazeFace model asset (record exact version + license in the task). Commit lockfile.
+**Task 12 — add dependency.** `npm i onnxruntime-node` + a BlazeFace model asset (record exact version + license in the task). Commit lockfile.
 
-**Task 10 — `lib/engine1/faceBox.ts` (+ test).** `detectFaceBox(buf: Buffer): Promise<FaceBox | null>` where `FaceBox = { box: {x,y,w,h}; eyesMouth?: {x,y,w,h} }`. Spans `eyesMouth` from BlazeFace's **coarse keypoints** (eyes, nose, mouth) — no precise contours. On any error/miss → `null`. Wire into `oilGenerationService` (call `detectFaceBox`, pass result to `deriveOilStrokesFromBuffer`). Test: **mock the detector** to assert the seam — detector throws/returns null → `faceBox.ts` returns `null` and generation still produces a valid plan. The model itself is not unit-tested.
+**Task 13 — `lib/engine1/faceBox.ts` (+ test).** `detectFaceBox(buf: Buffer): Promise<FaceBox | null>` where `FaceBox = { box: {x,y,w,h}; eyesMouth?: {x,y,w,h} }`. Spans `eyesMouth` from BlazeFace's **coarse keypoints** (eyes, nose, mouth) — no precise contours. On any error/miss → `null`. Wire into `oilGenerationService` (call `detectFaceBox`, pass result to `deriveOilStrokesFromBuffer`). Test: **mock the detector** to assert the seam — detector throws/returns null → `faceBox.ts` returns `null` and generation still produces a valid plan. The model itself is not unit-tested.
 
 ### M4 — choreography polish
 
-**Task 11 — pacing + tool tuning.** Tune `timing` defaults and `LAYER4_RESERVE_MS` against real generated portraits; add distinct tool sprites (`/tool-pencil.svg`, `/tool-brush.svg`, `/tool-pen.svg`) and map them in `OilPerformance`'s `TOOL_SRC`. Add a scheduler test asserting the tool sequence over a full timeline (pencil→brushBig→brushMid→brushFine→pen→null). Verify in `/dev/oil`.
+**Task 14 — pacing + tool tuning.** Tune `timing` defaults and `LAYER4_RESERVE_MS` against real generated portraits; add distinct tool sprites (`/tool-pencil.svg`, `/tool-brush.svg`, `/tool-pen.svg`) and map them in `OilPerformance`'s `TOOL_SRC`. Add a scheduler test asserting the tool sequence over a full timeline (pencil→brushBig→brushMid→brushFine→pen→null). Verify in `/dev/oil`.
 
 ### M5 — switch app over + retire v1 (the ONLY milestone that edits/deletes v1)
 
-**Task 12 — adopt v2 as the canonical contract.** Move `OilStroke`/`OilDrawingPlan`/timing into `lib/drawing/types.ts`, renaming `OilDrawingPlan`→`DrawingPlan` (the spec's final name); update `oil*` imports.
+**Task 15 — adopt v2 as the canonical contract.** Move `OilStroke`/`OilDrawingPlan`/timing into `lib/drawing/types.ts`, renaming `OilDrawingPlan`→`DrawingPlan` (the spec's final name); update `oil*` imports.
 
-**Task 13 — switch the route + flow.** `app/api/generate/route.ts` calls `generateOilDrawingPlan`; mock mode returns `OIL_FIXTURE` (or a derived mock plan); `app/page.tsx`/`EaselScreen.tsx` render `OilPerformance` instead of `DrawingPerformance`.
+**Task 16 — switch the route + flow.** `app/api/generate/route.ts` calls `generateOilDrawingPlan`; mock mode returns `OIL_FIXTURE` (or a derived mock plan); `app/page.tsx`/`EaselScreen.tsx` render `OilPerformance` instead of `DrawingPerformance`.
 
-**Task 14 — souvenir = painted snapshot.** `ResultView.tsx` downloads the painting `<canvas>` via `toBlob()` (lift the snapshot from `OilPerformance` via a ref/callback), **not** `plan.colorImage`. Add a note that `photoGlaze > 0` taints the canvas and disables export.
+**Task 17 — souvenir = painted snapshot.** `ResultView.tsx` downloads the painting `<canvas>` via `toBlob()` (lift the snapshot from `OilPerformance` via a ref/callback), **not** `plan.colorImage`. Add a note that `photoGlaze > 0` taints the canvas and disables export.
 
-**Task 15 — delete v1 + reconcile tests.** Remove `components/DrawingPerformance.tsx`, `lib/drawing/performanceScheduler.ts`, `lib/engine1/brushStrokes.ts`, the shading derivation in `derive.ts`, and the v1 `brushStrokes`/`shadingLayer` fields + the old fixture's brush parts. Update or delete their tests (`DrawingPerformance.test.tsx`, `performanceScheduler.test.ts`, the brushStrokes test, the `derive` shading test, the fixtures test). Run `npm run test` + `npm run build`; both green. Move `/dev/oil` behind a dev-only guard or delete it.
+**Task 18 — delete v1 + reconcile tests.** Remove `components/DrawingPerformance.tsx`, `lib/drawing/performanceScheduler.ts`, `lib/engine1/brushStrokes.ts`, the shading derivation in `derive.ts`, and the v1 `brushStrokes`/`shadingLayer` fields + the old fixture's brush parts. Update or delete their tests (`DrawingPerformance.test.tsx`, `performanceScheduler.test.ts`, the brushStrokes test, the `derive` shading test, the fixtures test). Run `npm run test` + `npm run build`; both green. Move `/dev/oil` behind a dev-only guard or delete it.
 
 **M5 EXIT CRITERIA:** the real app flow performs the oil engine end-to-end, the download is the painted snapshot, no v1 reveal/shading code remains, and the suite + build are green.
 
