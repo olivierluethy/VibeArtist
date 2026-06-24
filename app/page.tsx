@@ -48,12 +48,13 @@ export default function Home() {
       )}
 
       {state.step === 'performance' && state.plan && (
-        <EaselScreen plan={state.plan} onDone={() => advance()} />
+        <EaselScreen plan={state.plan} onDone={(snapshot) => advance({ snapshot })} />
       )}
 
       {state.step === 'result' && state.plan && state.config && (
         <ResultView
           plan={state.plan}
+          snapshot={state.snapshot ?? ''}
           config={state.config}
           onRestart={() => setState(INITIAL_STATE)}
         />

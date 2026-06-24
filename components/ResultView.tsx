@@ -5,17 +5,19 @@ import { shareText } from '@/lib/share';
 
 export default function ResultView({
   plan,
+  snapshot,
   config,
   onRestart,
 }: {
   plan: OilDrawingPlan;
+  snapshot: string;
   config: { team: string; player?: string };
   onRestart: () => void;
 }) {
   function download() {
     const a = document.createElement('a');
-    a.href = plan.colorImage;
-    a.download = 'drawmyai-portrait.svg';
+    a.href = snapshot;                       // the PAINTED canvas, NEVER plan.colorImage
+    a.download = 'drawmyai-portrait.png';
     a.click();
   }
 
@@ -42,7 +44,7 @@ export default function ResultView({
     <div className="flex flex-col items-center gap-6 py-8">
       <h2 className="font-serif text-3xl">Your portrait</h2>
       <div className="rounded-sm border-[10px] border-[var(--wood)] bg-[var(--canvas)] shadow-2xl">
-        <img src={plan.colorImage} alt="Your portrait" style={{ width: plan.width, height: plan.height }} />
+        <img src={snapshot} alt="Your portrait" style={{ width: plan.width, height: plan.height }} />
       </div>
       <div className="flex gap-3">
         <button className="btn-gold" onClick={download}>Download</button>

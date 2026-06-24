@@ -5,7 +5,7 @@ import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
 import { computeOilState } from '@/lib/drawing/oilScheduler';
 import { paintOilStroke, paintGround } from '@/lib/drawing/oilBrush';
 
-interface Props { plan: OilDrawingPlan; onDone: () => void; }
+interface Props { plan: OilDrawingPlan; onDone: (snapshot: string) => void; }
 
 const TOOL_SRC: Record<string, string> = {
   pencil: '/hand.svg', brushBig: '/hand.svg', brushMid: '/hand.svg', brushFine: '/hand.svg', pen: '/hand.svg',
@@ -86,7 +86,15 @@ export default function OilPerformance({ plan, onDone }: Props) {
       force((n) => n + 1);
 
       if (s.phase === 'done') {
-        if (!doneRef.current) { doneRef.current = true; onDone(); }
+        if (!doneRef.current) {
+          doneRef.current = true;
+          // Souvenir is clean by construction: hand <img> + SVG sketch are sibling DOM nodes, never
+          // drawn into this <canvas>; the hand is lifted (opacity 0, set above) at done. So toBlob()
+          // captures ONLY strokes+ground. (photoGlaze>0 would drawImage(colorImage) → taint → toBlob
+          // throws; default photoGlaze=0 avoids it.)
+          if (canvas) canvas.toBlob((blob) => onDone(blob ? URL.createObjectURL(blob) : ''));
+          else onDone('');
+        }
         return;
       }
       raf = requestAnimationFrame(tick);

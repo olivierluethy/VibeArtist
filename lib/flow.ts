@@ -7,6 +7,7 @@ export interface AppState {
   photo: string | null;
   config: { team: string; player?: string } | null;
   plan: OilDrawingPlan | null;
+  snapshot: string | null;
 }
 
 const ORDER: Step[] = ['start', 'input', 'vibe', 'preparing', 'performance', 'result'];
@@ -16,4 +17,4 @@ export function nextStep(step: Step): Step {
   return i < 0 || i === ORDER.length - 1 ? step : ORDER[i + 1];
 }
 
-export const INITIAL_STATE: AppState = { step: 'start', photo: null, config: null, plan: null };
+export const INITIAL_STATE: AppState = { step: 'start', photo: null, config: null, plan: null, snapshot: null };
