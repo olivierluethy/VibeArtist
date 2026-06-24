@@ -41,26 +41,35 @@ describe('computeOilState', () => {
   });
 
   it('reserves a FIXED Layer-4 tail: at the end of the bulk window, layer-4 has not started', () => {
-    // refine spans 2000..8000 (6000ms). bulk = layers 1..3 (count 2), reserve = LAYER4_RESERVE_MS.
-    const tBulkEnd = 2000 + (6000 - LAYER4_RESERVE_MS) - 1;
+    // refine spans 2000..8000 (6000ms). effective reserve = min(6000*0.4, LAYER4_RESERVE_MS) = 2400.
+    const reserve = Math.min(plan.timing.refineMs * 0.4, LAYER4_RESERVE_MS);
+    const refineStart = plan.timing.outlineMs + plan.timing.blockInMs;
+    const bulkMs = plan.timing.refineMs - reserve;
+    const tBulkEnd = refineStart + bulkMs; // exact bulk-window boundary
     const s = computeOilState(plan, tBulkEnd);
     expect(s.phase).toBe('refine');
-    expect(s.oilDrawn).toBe(2 /*c0*/ + 2 /*c1*/); // bulk done, layer-4 not yet
+    expect(s.oilDrawn).toBe(2 /*c0*/ + 2 /*bulk c1*/); // bulk done exactly, layer-4 not yet
   });
 
   it('paints the eyes/mouth (layer 4) during the reserved tail', () => {
-    const tInTail = 2000 + (6000 - LAYER4_RESERVE_MS) + LAYER4_RESERVE_MS / 2;
+    const reserve = Math.min(plan.timing.refineMs * 0.4, LAYER4_RESERVE_MS);
+    const refineStart = plan.timing.outlineMs + plan.timing.blockInMs;
+    const bulkMs = plan.timing.refineMs - reserve;
+    const tInTail = refineStart + bulkMs + reserve / 2; // halfway => exactly one of two layer-4 strokes
     const s = computeOilState(plan, tInTail);
-    expect(s.oilDrawn).toBe(2 + 2 + 1); // one of two layer-4 strokes
+    expect(s.oilDrawn).toBe(2 + 2 + 1); // c0 + bulk + one layer-4 stroke
     expect(s.tool).toBe('brushFine');
   });
 
   it('the Layer-4 tail length is independent of bulk stroke count (stadium case)', () => {
     const heavy: OilDrawingPlan = { ...plan, oilStrokes: [mk(0), ...Array.from({ length: 200 }, () => mk(1)), mk(4), mk(4)] };
-    const tInTail = 2000 + (6000 - LAYER4_RESERVE_MS) + LAYER4_RESERVE_MS / 2;
+    const reserve = Math.min(heavy.timing.refineMs * 0.4, LAYER4_RESERVE_MS);
+    const refineStart = heavy.timing.outlineMs + heavy.timing.blockInMs;
+    const bulkMs = heavy.timing.refineMs - reserve;
+    const tInTail = refineStart + bulkMs + reserve / 2;
     const s = computeOilState(heavy, tInTail);
-    // half of the two layer-4 strokes painted, regardless of the 200 bulk strokes
-    expect(s.oilDrawn).toBe(1 /*c0*/ + 200 /*bulk*/ + 1 /*half of layer4*/);
+    // exactly one of the two layer-4 strokes painted, regardless of the 200 bulk strokes
+    expect(s.oilDrawn).toBe(1 /*c0*/ + 200 /*bulk*/ + 1 /*one of two layer4*/);
   });
 
   it('accent reveals layer 5 with the pen', () => {

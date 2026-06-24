@@ -33,7 +33,7 @@ export function computeOilState(plan: OilDrawingPlan, elapsedMs: number): OilRen
   const counts = [0, 1, 2, 3, 4, 5].map((L) => oilStrokes.filter((s) => s.layer === L).length);
 
   const settle = (phase: OilRenderState['phase'], sketchFractions: number[], drawnRaw: number): OilRenderState => {
-    const oilDrawn = Math.min(T, Math.max(0, Math.round(drawnRaw)));
+    const oilDrawn = Math.min(T, Math.max(0, Math.floor(drawnRaw)));
     const activeOil = oilDrawn > 0 && oilDrawn <= T ? oilDrawn - 1 : null;
     const tool = activeOil != null && oilStrokes[activeOil] ? toolForLayer(oilStrokes[activeOil].layer) : null;
     return { phase, sketchFractions, activeSketch: null, oilDrawn, activeOil, tool };
