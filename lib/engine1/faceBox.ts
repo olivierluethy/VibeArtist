@@ -22,3 +22,23 @@ export function toFaceBox(raw: RawDetection, dispW: number, dispH: number): Face
   const eyesMouth: Rect = { x, y, w: Math.min(box.x + box.w, maxX) - x, h: Math.min(box.y + box.h, maxY) - y };
   return { box, eyesMouth };
 }
+
+export type FaceModelRunner = (buf: Buffer) => Promise<RawDetection | null>;
+
+/** Real BlazeFace inference is wired in the network-gated task (M3.4). Until then this throws,
+ *  so detectFaceBox falls back to null and derivation stays pure detail-driven. NO onnxruntime import here. */
+const defaultRunner: FaceModelRunner = async () => {
+  throw new Error('faceBox: BlazeFace runner not wired (M3.4 — needs onnxruntime-node@1.24.3 + a clean-license model)');
+};
+
+/** Server-side face detection. NON-BLOCKING: any failure (missing model, throw, no face) → null. */
+export async function detectFaceBox(
+  buf: Buffer, dispW: number, dispH: number, runner: FaceModelRunner = defaultRunner,
+): Promise<FaceBox | null> {
+  try {
+    const raw = await runner(buf);
+    return raw ? toFaceBox(raw, dispW, dispH) : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toFaceBox, type RawDetection } from './faceBox';
+import { toFaceBox, detectFaceBox, type RawDetection } from './faceBox';
 
 const raw: RawDetection = {
   box: { x: 0.25, y: 0.2, w: 0.5, h: 0.6 },
@@ -27,5 +27,22 @@ describe('toFaceBox', () => {
   });
   it('omits eyesMouth when fewer than 4 keypoints', () => {
     expect(toFaceBox({ box: raw.box, keypoints: [{ x: 0.5, y: 0.5 }] }, 400, 500).eyesMouth).toBeUndefined();
+  });
+});
+
+describe('detectFaceBox (seam + non-blocking fallback)', () => {
+  const buf = Buffer.from('x');
+  it('runner throws → null (never blocks generation)', async () => {
+    expect(await detectFaceBox(buf, 400, 500, async () => { throw new Error('boom'); })).toBeNull();
+  });
+  it('runner finds no face → null', async () => {
+    expect(await detectFaceBox(buf, 400, 500, async () => null)).toBeNull();
+  });
+  it('runner detects a face → scaled FaceBox with eyesMouth', async () => {
+    const fb = await detectFaceBox(buf, 400, 500, async () => raw);
+    expect(fb).not.toBeNull(); expect(fb!.box.w).toBeCloseTo(200); expect(fb!.eyesMouth).toBeDefined();
+  });
+  it('the DEFAULT (unwired) runner makes detection fall back to null — offline-safe', async () => {
+    expect(await detectFaceBox(buf, 400, 500)).toBeNull(); // defaultRunner throws → caught → null
   });
 });
