@@ -875,16 +875,699 @@ git commit -m "feat(oil): /dev/oil visual harness + painted-snapshot download"
 
 > **Why these are outlined, not micro-stepped yet:** their concrete code (gradient thresholds, BlazeFace's exact Node API surface, final pacing constants) should be pinned against M1's *real* visual output and the real BlazeFace package, not guessed now — guessing would bake in speculative numbers that M1 tuning will overturn (YAGNI). Each task below is concrete in files/interfaces/tests; expand to full bite-sized TDD steps (like M0–M1) at the start of that milestone. Every task stays **additive** until M5.
 
-### M2 — server-side stroke derivation
+### M2 — server-side stroke derivation  *(EXPANDED 2026-06-24, pinned to M1 reality)*
 
-**Task 7 — `lib/engine1/oilStrokes.ts` (+ test).** `deriveOilStrokesFromBuffer(buf: Buffer, dispW: number, dispH: number, faceBox?: FaceBox | null): Promise<OilStroke[]>`.
-- Build the orientation field (jimp: downscale → luminance → Sobel → structure-tensor smoothing → per-cell magnitude + tangent angle).
-- Emit layers 0–5 per spec §3 table (detail-driven gates; seeded jitter).
-- Apply face-box density boost (lower gates inside `box`); emit the dedicated Layer-4 pass only when `eyesMouth` present.
-- Output ordered by `layer` ascending, then colour-cluster + locality within a layer.
-- Tests: synthetic gradient image → expected angles (±tolerance); flat vs. busy patch → stroke-count ratio; `layer` ascending invariant; with vs. without `faceBox` → more face strokes; Layer-4 present iff `eyesMouth`; `faceBox = null` → still non-empty valid output (fallback). Deterministic (seeded).
+> **Expansion notes (reality-pinned against the shipped M0/M1 code):**
+> - **jimp:** `jimp@0.14.0` is installed (used by `brushStrokes.ts`/`lineart.ts`) but was **not** declared in `package.json`. M2-T1 Step 0 declares it explicitly (per decision 2026-06-24). API used: `import Jimp from 'jimp'`, `await Jimp.read(buf)`, `img.clone()`, `img.resize(w,h)`, `img.greyscale()`, `img.getPixelColor(x,y): number`, `Jimp.intToRGBA(int) → {r,g,b,a}`, `img.bitmap.{width,height}`. Build synthetic test images with `await Jimp.create(w,h)` (or `new Jimp(w,h,hexInt)`), `img.setPixelColor(Jimp.rgbaToInt(r,g,b,255), x, y)`, `await img.getBufferAsync(Jimp.MIME_PNG)`.
+> - **Reused v1 helpers (verbatim signatures):** `loadImageBuffer(src: string): Promise<Buffer>` (`./imageSource`); `deriveLineArtFromBuffer(buf: Buffer): Promise<string>` (`./derive`, returns a line-art data URI); `traceToStrokePaths(src: string): Promise<StrokePath[]>` (`./lineart`); `PortraitEngine.generate(input): Promise<PortraitOutput>` with `PortraitOutput = { colorImage: string; width: number; height: number }` and `PortraitInput = { selfie: string; team: string; player?: string }` (`./portraitEngine`).
+> - **Load-bearing M1 contract:** the scheduler advances `oilDrawn` as an **index into `oilStrokes`** and filters per-layer counts, so the array MUST be **strictly layer-ascending and contiguous** (all layer 0, then 1, 2, 3, then 4, then 5). Layers 1–3 are the refine "bulk", layer 4 is the reserved-tail eyes/mouth pass, layer 5 is the accents. `toolForLayer` fixes meanings (0 big, 1 mid, 2–4 fine, 5 pen). Strokes are in **display coords** (0..dispW, 0..dispH).
+> - **Per-layer params matched to the validated M1 fixture look** (`oilFixture.ts`): `LAYER_WIDTH = [30,18,10,6,4,5]`, `LAYER_LENGTH = [30,20,12,8,5,7]`, grid `LAYER_STEP = [34,22,14,9,5,7]` (display px). Seeded jitter `rnd(i)=frac(sin(i*12.9898)*43758.5453)` (same as the fixture) for determinism. These are starting values; final tuning is M4.
+> - **faceBox seam:** `FaceBox = { box: Rect; eyesMouth?: Rect }` in **display coords**, type defined/exported by `oilStrokes.ts`. M2 tests it with a **mock** object; the real BlazeFace detector (which must scale its output to display coords) is M3. The `faceBox` param is accepted from T2 but only used from T3 (box boost) / T4 (eyes/mouth).
+> - **Baseline note:** baseline is **63 green** at M1 end (HEAD `0fb417d`); each task is additive and raises the count. Gate every task: all prior tests stay green + new tests pass; `npx tsc --noEmit` shows only the 4 known pre-existing errors in `realPortraitEngine.test.ts` (no new); independent review; **stop for review after each task.**
 
-**Task 8 — `lib/engine1/oilGenerationService.ts` (+ test).** `generateOilDrawingPlan(input, engine): Promise<OilDrawingPlan>`. Reuses `loadImageBuffer`, `deriveLineArtFromBuffer`, `traceToStrokePaths` for `strokePaths`; calls `deriveOilStrokesFromBuffer`; sets `timing` (v2) and `photoGlaze: 0`; **does not** derive shading. Leaves the existing `generateDrawingPlan` untouched. Test: returns a valid `OilDrawingPlan` from a fixture buffer; `oilStrokes` non-empty and layer-ordered; no shading field.
+---
+
+#### Task 7: Orientation field (`orientationField.ts`)
+
+**Files:**
+- Modify: `package.json` (declare jimp)
+- Create: `lib/engine1/orientationField.ts`
+- Test: `lib/engine1/orientationField.test.ts`
+
+**Interfaces:**
+- Consumes: jimp 0.14 (image decode).
+- Produces: `interface OrientationField { cols: number; rows: number; maxMagnitude: number; angleAt(dispX, dispY, dispW, dispH): number; magnitudeAt(dispX, dispY, dispW, dispH): number }`; `buildOrientationField(buf: Buffer, cols?: number): Promise<OrientationField>`. Consumed by Task 8 (`oilStrokes.ts`).
+
+- [ ] **Step 0: Declare jimp** in `package.json` `dependencies` (already installed at this version, this just makes it explicit):
+
+```json
+    "jimp": "0.14.0",
+```
+
+Run `npm install` to refresh the lockfile, then `npm test` to confirm the 63 tests still pass (no behavior change).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import Jimp from 'jimp';
+import { buildOrientationField } from './orientationField';
+
+/** Build a PNG buffer from a per-pixel luminance function (0..255). */
+async function lumPng(w: number, h: number, lum: (x: number, y: number) => number): Promise<Buffer> {
+  const img = await Jimp.create(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = Math.max(0, Math.min(255, Math.round(lum(x, y))));
+      img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+    }
+  }
+  return img.getBufferAsync(Jimp.MIME_PNG);
+}
+
+/** Distance between two angles modulo π (orientation is undirected). */
+const angleDistModPi = (a: number, b: number) => {
+  const d = Math.abs(((a - b) % Math.PI + Math.PI) % Math.PI);
+  return Math.min(d, Math.PI - d);
+};
+
+describe('buildOrientationField', () => {
+  let vertical: Buffer;   // luminance changes along Y → gradient is vertical
+  let horizontal: Buffer; // luminance changes along X → gradient is horizontal
+  let flat: Buffer;
+
+  beforeAll(async () => {
+    vertical = await lumPng(64, 64, (_x, y) => (y / 63) * 255);
+    horizontal = await lumPng(64, 64, (x, _y) => (x / 63) * 255);
+    flat = await lumPng(64, 64, () => 128);
+  });
+
+  it('vertical gradient → tangent runs horizontal (≈ 0 mod π)', async () => {
+    const f = await buildOrientationField(vertical);
+    expect(angleDistModPi(f.angleAt(32, 32, 64, 64), 0)).toBeLessThan(0.3);
+  });
+
+  it('horizontal gradient → tangent runs vertical (≈ π/2 mod π)', async () => {
+    const f = await buildOrientationField(horizontal);
+    expect(angleDistModPi(f.angleAt(32, 32, 64, 64), Math.PI / 2)).toBeLessThan(0.3);
+  });
+
+  it('flat image → ~zero magnitude and a stable default angle (no NaN/spin)', async () => {
+    const f = await buildOrientationField(flat);
+    expect(f.magnitudeAt(32, 32, 64, 64)).toBeLessThan(0.05);
+    expect(Number.isFinite(f.angleAt(32, 32, 64, 64))).toBe(true);
+    expect(f.angleAt(10, 10, 64, 64)).toBe(f.angleAt(50, 50, 64, 64)); // constant default
+  });
+
+  it('an edge region has higher magnitude than a flat region', async () => {
+    // left half black, right half white → strong vertical edge down the middle
+    const edge = await lumPng(64, 64, (x) => (x < 32 ? 0 : 255));
+    const f = await buildOrientationField(edge);
+    expect(f.magnitudeAt(32, 32, 64, 64)).toBeGreaterThan(f.magnitudeAt(8, 32, 64, 64));
+  });
+
+  it('is deterministic (same buffer → identical angles)', async () => {
+    const a = await buildOrientationField(vertical);
+    const b = await buildOrientationField(vertical);
+    expect(a.angleAt(20, 40, 64, 64)).toBe(b.angleAt(20, 40, 64, 64));
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails** — `npx vitest run lib/engine1/orientationField.test.ts` → FAIL (module missing).
+
+- [ ] **Step 3: Write the implementation**
+
+```ts
+import Jimp from 'jimp';
+
+export interface OrientationField {
+  cols: number;
+  rows: number;
+  maxMagnitude: number;
+  /** Tangent angle (radians, along the form) at a display point. */
+  angleAt(dispX: number, dispY: number, dispW: number, dispH: number): number;
+  /** Normalised gradient magnitude (0..1) at a display point. */
+  magnitudeAt(dispX: number, dispY: number, dispW: number, dispH: number): number;
+}
+
+const DEFAULT_ANGLE = 0; // flat regions: a gentle constant so block-in strokes don't spin
+const FLAT_EPS = 0.02;   // normalised magnitude below this counts as "flat"
+
+export async function buildOrientationField(buf: Buffer, cols = 200): Promise<OrientationField> {
+  const img = await Jimp.read(buf);
+  const aspect = img.bitmap.height / img.bitmap.width;
+  const gridW = Math.max(8, Math.min(cols, img.bitmap.width));
+  const gridH = Math.max(8, Math.round(gridW * aspect));
+  const small = img.clone().resize(gridW, gridH).greyscale();
+
+  const lum = (cx: number, cy: number): number => {
+    const x = Math.max(0, Math.min(gridW - 1, cx));
+    const y = Math.max(0, Math.min(gridH - 1, cy));
+    return Jimp.intToRGBA(small.getPixelColor(x, y)).r / 255;
+  };
+
+  // Sobel gradient per cell.
+  const gx = new Float64Array(gridW * gridH);
+  const gy = new Float64Array(gridW * gridH);
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const tl = lum(x - 1, y - 1), t = lum(x, y - 1), tr = lum(x + 1, y - 1);
+      const l = lum(x - 1, y), r = lum(x + 1, y);
+      const bl = lum(x - 1, y + 1), b = lum(x, y + 1), br = lum(x + 1, y + 1);
+      gx[y * gridW + x] = (tr + 2 * r + br) - (tl + 2 * l + bl);
+      gy[y * gridW + x] = (bl + 2 * b + br) - (tl + 2 * t + tr);
+    }
+  }
+
+  // Structure-tensor smoothing (3×3) → coherent orientation + magnitude.
+  const angle = new Float64Array(gridW * gridH);
+  const mag = new Float64Array(gridW * gridH);
+  let maxMag = 0;
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      let jxx = 0, jyy = 0, jxy = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = Math.max(0, Math.min(gridW - 1, x + dx));
+          const ny = Math.max(0, Math.min(gridH - 1, y + dy));
+          const vx = gx[ny * gridW + nx], vy = gy[ny * gridW + nx];
+          jxx += vx * vx; jyy += vy * vy; jxy += vx * vy;
+        }
+      }
+      const gradAngle = 0.5 * Math.atan2(2 * jxy, jxx - jyy); // dominant gradient direction
+      angle[y * gridW + x] = gradAngle + Math.PI / 2;          // tangent ⊥ gradient = along the form
+      const m = Math.sqrt(jxx + jyy);
+      mag[y * gridW + x] = m;
+      if (m > maxMag) maxMag = m;
+    }
+  }
+  for (let i = 0; i < mag.length; i++) mag[i] = maxMag > 0 ? mag[i] / maxMag : 0;
+
+  const cellOf = (dispX: number, dispY: number, dispW: number, dispH: number): number => {
+    const cx = Math.max(0, Math.min(gridW - 1, Math.floor((dispX / dispW) * gridW)));
+    const cy = Math.max(0, Math.min(gridH - 1, Math.floor((dispY / dispH) * gridH)));
+    return cy * gridW + cx;
+  };
+
+  return {
+    cols: gridW,
+    rows: gridH,
+    maxMagnitude: maxMag,
+    angleAt(dispX, dispY, dispW, dispH) {
+      const i = cellOf(dispX, dispY, dispW, dispH);
+      return mag[i] < FLAT_EPS ? DEFAULT_ANGLE : angle[i];
+    },
+    magnitudeAt(dispX, dispY, dispW, dispH) {
+      return mag[cellOf(dispX, dispY, dispW, dispH)];
+    },
+  };
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes** — `npx vitest run lib/engine1/orientationField.test.ts` → PASS.
+- [ ] **Step 5: Full suite + tsc** — `npm test` (all prior + 5 new green); `npx tsc --noEmit` (only the 4 pre-existing errors).
+- [ ] **Step 6: Commit** — `git add package.json package-lock.json lib/engine1/orientationField.ts lib/engine1/orientationField.test.ts && git commit -m "feat(oil): orientation field (Sobel + structure tensor) + declare jimp"`
+
+---
+
+#### Task 8: oilStrokes skeleton — layers 0–1, ordering, determinism (`oilStrokes.ts`)
+
+**Files:**
+- Create: `lib/engine1/oilStrokes.ts`
+- Test: `lib/engine1/oilStrokes.test.ts`
+
+**Interfaces:**
+- Consumes: `buildOrientationField`/`OrientationField` (Task 7); `OilStroke` (`@/lib/drawing/oilTypes`); jimp.
+- Produces: `interface Rect { x: number; y: number; w: number; h: number }`; `interface FaceBox { box: Rect; eyesMouth?: Rect }`; `deriveOilStrokesFromBuffer(buf: Buffer, dispW: number, dispH: number, faceBox?: FaceBox | null): Promise<OilStroke[]>`. Consumed by Tasks 9–11.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import Jimp from 'jimp';
+import { deriveOilStrokesFromBuffer } from './oilStrokes';
+
+async function busyPng(w: number, h: number): Promise<Buffer> {
+  const img = await Jimp.create(w, h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const v = ((x ^ y) & 16) ? 220 : 40; // high-contrast checker → lots of detail
+      img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+    }
+  return img.getBufferAsync(Jimp.MIME_PNG);
+}
+
+describe('deriveOilStrokesFromBuffer (layers 0–1)', () => {
+  let buf: Buffer;
+  beforeAll(async () => { buf = await busyPng(128, 160); });
+
+  it('produces valid in-bounds strokes', async () => {
+    const s = await deriveOilStrokesFromBuffer(buf, 400, 500);
+    expect(s.length).toBeGreaterThan(0);
+    for (const k of s) {
+      expect(k.color).toMatch(/^#[0-9a-f]{6}$/);
+      expect(k.width).toBeGreaterThan(0);
+      expect(k.length).toBeGreaterThan(0);
+      expect(Number.isFinite(k.angle)).toBe(true);
+      expect(k.x).toBeGreaterThanOrEqual(0); expect(k.x).toBeLessThanOrEqual(400);
+      expect(k.y).toBeGreaterThanOrEqual(0); expect(k.y).toBeLessThanOrEqual(500);
+    }
+  });
+
+  it('is strictly layer-ascending AND contiguous (no gaps/interleaving — the scheduler indexes by per-layer count)', async () => {
+    const layers = (await deriveOilStrokesFromBuffer(buf, 400, 500)).map((k) => k.layer);
+    expect(new Set(layers)).toEqual(new Set([0, 1]));
+    // Monotonic non-decreasing ⇒ each layer is one contiguous block; assert that explicitly.
+    for (let i = 1; i < layers.length; i++) expect(layers[i]).toBeGreaterThanOrEqual(layers[i - 1]);
+    const firstOne = layers.indexOf(1);
+    expect(layers.slice(0, firstOne).every((L) => L === 0)).toBe(true); // every stroke before the first layer-1 is layer-0
+    expect(layers.slice(firstOne).every((L) => L === 1)).toBe(true);    // and no layer-0 ever reappears after
+  });
+
+  it('takes each stroke angle from the orientation field tangent (consistent with T7)', async () => {
+    // HORIZONTAL luminance gradient → field tangent runs VERTICAL (≈ π/2 mod π).
+    // Strokes must run ALONG the form. A constant/hardcoded angle (e.g. 0) would FAIL this test —
+    // only an angle genuinely read from the field passes, tying T8 to T7's verified tangent.
+    const img = await Jimp.create(128, 160);
+    for (let y = 0; y < 160; y++) for (let x = 0; x < 128; x++) {
+      const v = Math.round((x / 127) * 255);
+      img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+    }
+    const grad = await img.getBufferAsync(Jimp.MIME_PNG);
+    const strokes = await deriveOilStrokesFromBuffer(grad, 400, 500);
+    const distToVertical = (a: number) => {
+      const d = Math.abs((((a - Math.PI / 2) % Math.PI) + Math.PI) % Math.PI);
+      return Math.min(d, Math.PI - d);
+    };
+    const dists = strokes.map((s) => distToVertical(s.angle)).sort((x, y) => x - y);
+    expect(dists[Math.floor(dists.length / 2)]).toBeLessThan(0.3); // median angle ≈ vertical
+  });
+
+  it('layer 0 blocks in across the whole canvas (top and bottom both covered)', async () => {
+    // Layer 0 has the gate `() => true`, so it covers the full jittered grid regardless of content.
+    // (Do NOT assert layer0 >= layer1: layer 1 has a finer grid (step 22 < 34) and on a busy image
+    //  legitimately produces MORE strokes — that is correct, not a bug.)
+    const s0 = (await deriveOilStrokesFromBuffer(buf, 400, 500)).filter((k) => k.layer === 0);
+    expect(s0.length).toBeGreaterThan(0);
+    expect(s0.some((k) => k.y < 100)).toBe(true);   // strokes near the top
+    expect(s0.some((k) => k.y > 400)).toBe(true);   // strokes near the bottom
+  });
+
+  it('is deterministic', async () => {
+    const a = await deriveOilStrokesFromBuffer(buf, 400, 500);
+    const b = await deriveOilStrokesFromBuffer(buf, 400, 500);
+    expect(a).toEqual(b);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails** — `npx vitest run lib/engine1/oilStrokes.test.ts` → FAIL (module missing).
+
+- [ ] **Step 3: Write the implementation**
+
+```ts
+import Jimp from 'jimp';
+import type { OilStroke } from '@/lib/drawing/oilTypes';
+import { buildOrientationField } from './orientationField';
+
+export interface Rect { x: number; y: number; w: number; h: number }
+export interface FaceBox { box: Rect; eyesMouth?: Rect }
+
+// Per-layer params, matched to the validated M1 fixture look (tuned further in M4).
+const LAYER_WIDTH = [30, 18, 10, 6, 4, 5];
+const LAYER_LENGTH = [30, 20, 12, 8, 5, 7];
+const LAYER_STEP = [34, 22, 14, 9, 5, 7]; // grid spacing in display px
+
+const clamp8 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+const hex2 = (n: number) => clamp8(n).toString(16).padStart(2, '0');
+// Deterministic pseudo-random in [0,1) from an integer seed (same as the fixture).
+const rnd = (i: number) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
+
+export async function deriveOilStrokesFromBuffer(
+  buf: Buffer,
+  dispW: number,
+  dispH: number,
+  _faceBox: FaceBox | null = null, // accepted now; used from Task 9 (box boost) / Task 10 (eyes-mouth)
+): Promise<OilStroke[]> {
+  const field = await buildOrientationField(buf);
+
+  // Small colour-sampling grid (bilinear average per cell).
+  const img = await Jimp.read(buf);
+  const cW = Math.max(8, Math.min(64, img.bitmap.width));
+  const cH = Math.max(8, Math.round((cW * img.bitmap.height) / img.bitmap.width));
+  const small = img.clone().resize(cW, cH);
+  const sampleColor = (dispX: number, dispY: number, seed: number): string => {
+    const cx = Math.max(0, Math.min(cW - 1, Math.floor((dispX / dispW) * cW)));
+    const cy = Math.max(0, Math.min(cH - 1, Math.floor((dispY / dispH) * cH)));
+    const { r, g, b } = Jimp.intToRGBA(small.getPixelColor(cx, cy));
+    const j = (rnd(seed) - 0.5) * 16; // ±8 seeded colour jitter
+    return `#${hex2(r + j)}${hex2(g + j)}${hex2(b + j)}`;
+  };
+
+  const out: OilStroke[] = [];
+  // Emit one layer over a jittered grid, keeping a stroke only where `gate` passes.
+  const emitLayer = (layer: number, gate: (x: number, y: number) => boolean) => {
+    const step = LAYER_STEP[layer];
+    let seed = layer * 100000;
+    for (let y = step / 2; y < dispH; y += step) {
+      for (let x = step / 2; x < dispW; x += step) {
+        if (!gate(x, y)) continue;
+        const jx = (rnd(seed++) - 0.5) * step * 0.6;
+        const jy = (rnd(seed++) - 0.5) * step * 0.6;
+        const px = Math.max(0, Math.min(dispW, x + jx));
+        const py = Math.max(0, Math.min(dispH, y + jy));
+        out.push({
+          x: px, y: py,
+          angle: field.angleAt(px, py, dispW, dispH),
+          length: LAYER_LENGTH[layer],
+          width: LAYER_WIDTH[layer],
+          color: sampleColor(px, py, seed),
+          layer,
+        });
+      }
+    }
+  };
+
+  emitLayer(0, () => true);                                          // block-in: covers everything
+  emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15); // forms: low magnitude gate
+  return out; // already layer-ascending (0 then 1)
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes** — `npx vitest run lib/engine1/oilStrokes.test.ts` → PASS.
+- [ ] **Step 5: Full suite + tsc** (all green; only the 4 pre-existing tsc errors).
+- [ ] **Step 6: Commit** — `git add lib/engine1/oilStrokes.ts lib/engine1/oilStrokes.test.ts && git commit -m "feat(oil): oilStrokes skeleton — block-in + forms layers, ordered & deterministic"`
+
+---
+
+#### Task 9: layers 2–3 detail gating + face-box density boost (`oilStrokes.ts`)
+
+**Files:**
+- Modify: `lib/engine1/oilStrokes.ts`
+- Modify: `lib/engine1/oilStrokes.test.ts`
+
+**Interfaces:** unchanged public signature; now consumes `faceBox.box`.
+
+- [ ] **Step 1: Add failing tests** (append to the existing describe block)
+
+```ts
+describe('deriveOilStrokesFromBuffer (layers 2–3 + box boost)', () => {
+  it('a busy image yields more layer 2–3 strokes than a flat image', async () => {
+    const busy = await busyPng(128, 160);
+    const flatImg = await Jimp.create(128, 160);
+    for (let y = 0; y < 160; y++) for (let x = 0; x < 128; x++) flatImg.setPixelColor(Jimp.rgbaToInt(128,128,128,255), x, y);
+    const flat = await flatImg.getBufferAsync(Jimp.MIME_PNG);
+    const det = (s: { layer: number }[]) => s.filter((k) => k.layer === 2 || k.layer === 3).length;
+    expect(det(await deriveOilStrokesFromBuffer(busy, 400, 500)))
+      .toBeGreaterThan(det(await deriveOilStrokesFromBuffer(flat, 400, 500)));
+  });
+
+  // Helper (add near busyPng): quadratic luminance ramp → a CONTINUUM of detail magnitudes
+  // (slope grows with x), so some cells land between the boosted and base gate thresholds.
+  // async function gradPng(w, h) {
+  //   const img = await Jimp.create(w, h);
+  //   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+  //     const v = Math.round((x / (w - 1)) ** 2 * 255);
+  //     img.setPixelColor(Jimp.rgbaToInt(v, v, v, 255), x, y);
+  //   }
+  //   return img.getBufferAsync(Jimp.MIME_PNG);
+  // }
+  it('box boost is a DENSITY effect: strictly more layer 2–3 strokes centred INSIDE the box', async () => {
+    // gradPng gives a continuum of magnitudes (no saturation), so lowering the gate inside the box
+    // is a strict superset there. Pin the positive effect: more detail strokes land inside the box.
+    // (Localization — that the boost is confined to the box, not global — is verified by CODE-READ in
+    //  review: the gate is `inRect(x,y,box) ? base - boost : base`. An emergent "nothing added outside"
+    //  equality is fragile because the per-pass seed advance diverges the outside jitter between runs.)
+    const grad = await gradPng(128, 160);
+    const box = { x: 0, y: 0, w: 200, h: 500 }; // left half, display coords
+    const detIn = (s: { layer: number; x: number }[]) =>
+      s.filter((k) => (k.layer === 2 || k.layer === 3) && k.x <= 200).length;
+    const base = await deriveOilStrokesFromBuffer(grad, 400, 500, null);
+    const boosted = await deriveOilStrokesFromBuffer(grad, 400, 500, { box });
+    expect(detIn(boosted)).toBeGreaterThan(detIn(base));
+  });
+
+  it('stays strictly layer-ascending AND contiguous over {0,1,2,3}', async () => {
+    const layers = (await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 0, y: 0, w: 400, h: 500 } })).map((k) => k.layer);
+    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3]));
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // monotonic non-decreasing ⇒ contiguous blocks, no interleaving
+    expect(Math.max(...layers)).toBe(3);
+  });
+
+  it('faceBox=null → pure-magnitude fallback: valid non-empty plan, layers 0–3 only', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, null);
+    expect(s.length).toBeGreaterThan(0);
+    expect(s.every((k) => k.layer >= 0 && k.layer <= 3)).toBe(true);
+  });
+
+  it('does NOT emit any eyes/mouth (layer 4+) pass yet — deferred to T10 — even when eyesMouth is provided', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, {
+      box: { x: 120, y: 110, w: 160, h: 190 },
+      eyesMouth: { x: 150, y: 180, w: 100, h: 120 },
+    });
+    expect(s.some((k) => k.layer >= 4)).toBe(false); // T9 ignores eyesMouth; no layer-4 special-casing
+    expect(Math.max(...s.map((k) => k.layer))).toBe(3);
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify the new tests fail** (layers 2–3 not emitted yet) — `npx vitest run lib/engine1/oilStrokes.test.ts`.
+
+- [ ] **Step 3: Implement** — add a box-aware gate helper and emit layers 2–3 after layer 1, before `return`:
+
+```ts
+  // inside deriveOilStrokesFromBuffer, replace the two emitLayer(...) calls + return with:
+  const inRect = (x: number, y: number, rect?: Rect) =>
+    !!rect && x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+
+  // Magnitude gate that relaxes inside the face box (more, smaller strokes there).
+  const magGate = (base: number, boost: number) => (x: number, y: number) => {
+    const m = field.magnitudeAt(x, y, dispW, dispH);
+    const thresh = inRect(x, y, _faceBox?.box) ? base - boost : base;
+    return m > thresh;
+  };
+
+  emitLayer(0, () => true);
+  emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15);
+  emitLayer(2, magGate(0.30, 0.20)); // detail: mid gate, boosted inside the box
+  emitLayer(3, magGate(0.50, 0.25)); // fine: high gate, boosted inside the box
+  return out;
+```
+
+- [ ] **Step 4: Run to verify pass.** **Step 5: Full suite + tsc.** **Step 6: Commit** — `git commit -m "feat(oil): layers 2–3 detail gating + face-box density boost"`
+
+---
+
+#### Task 10: layer 4 (eyes/mouth) + layer 5 (accents) + locality + budget (`oilStrokes.ts`)
+
+**Files:** Modify `lib/engine1/oilStrokes.ts` + its test.
+
+- [ ] **Step 1a: Reconcile the now-obsolete prior-task layer-set assertions (REQUIRED FIRST).**
+
+T10 adds layers **4 and 5** to the same function, which falsifies four already-committed tests that assert "only layers ≤ 3". This is expected lifecycle (those were correct scaffolding for T8/T9), but it must be done with exact edits — not improvised — and converted to **layer-set-agnostic** contiguity so they never break again in M3/M4. In `lib/engine1/oilStrokes.test.ts`:
+
+1. `(layers 0–1)` block, test `'is strictly layer-ascending AND contiguous ...'` — replace its body with:
+```ts
+    const layers = (await deriveOilStrokesFromBuffer(buf, 400, 500)).map((k) => k.layer);
+    expect(layers.length).toBeGreaterThan(0);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // ascending ⇒ contiguous blocks (no interleaving); layer-set-agnostic
+    expect(layers).not.toContain(4); // no eyesMouth provided → no dedicated eyes/mouth pass
+```
+
+2. `(layers 2–3 + box boost)` block, test `'stays strictly layer-ascending AND contiguous over {0,1,2,3}'` — rename to `'stays strictly layer-ascending AND contiguous (full-canvas box, no eyesMouth)'` and replace its body with:
+```ts
+    const layers = (await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 0, y: 0, w: 400, h: 500 } })).map((k) => k.layer);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b));
+    expect(layers).not.toContain(4); // box boost is density-only; no eyesMouth ⇒ still no layer 4
+```
+
+3. `(layers 2–3 + box boost)` block, test `'faceBox=null → pure-magnitude fallback: valid non-empty plan, layers 0–3 only'` — rename to `'faceBox=null → pure-magnitude fallback: valid non-empty, no layer 4'` and replace its body with:
+```ts
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, null);
+    expect(s.length).toBeGreaterThan(0);
+    expect(s.some((k) => k.layer === 4)).toBe(false); // layer 4 needs eyesMouth; accents (5) may still appear
+```
+
+4. `(layers 2–3 + box boost)` block, test `'does NOT emit any eyes/mouth (layer 4+) pass yet — deferred to T10 ...'` — **DELETE it entirely.** T10 implements exactly that pass; the `'emits a layer-4 pass IFF eyesMouth'` test below is its replacement.
+
+- [ ] **Step 1b: Add the T10 failing tests** (new describe block):
+
+```ts
+describe('deriveOilStrokesFromBuffer (layers 4–5, locality, budget)', () => {
+  it('emits a layer-4 pass IFF eyesMouth is present, confined (within jitter) to that rect', async () => {
+    const buf = await busyPng(128, 160);
+    const noFace = (await deriveOilStrokesFromBuffer(buf, 400, 500, null)).filter((k) => k.layer === 4);
+    expect(noFace.length).toBe(0); // no eyesMouth ⇒ no dedicated pass
+    const em = { x: 150, y: 180, w: 100, h: 120 };
+    const withEM = (await deriveOilStrokesFromBuffer(buf, 400, 500, { box: { x: 120, y: 110, w: 160, h: 190 }, eyesMouth: em })).filter((k) => k.layer === 4);
+    expect(withEM.length).toBeGreaterThan(0);
+    const M = 2; // layer-4 step is 5 ⇒ jitter ≤ ±1.5px; the GATE checks the grid point, the stroke is jittered, so allow a 2px margin
+    for (const k of withEM) {
+      expect(k.x).toBeGreaterThanOrEqual(em.x - M); expect(k.x).toBeLessThanOrEqual(em.x + em.w + M);
+      expect(k.y).toBeGreaterThanOrEqual(em.y - M); expect(k.y).toBeLessThanOrEqual(em.y + em.h + M);
+    }
+  });
+
+  it('emits layer-5 accents that sort LAST; whole array ascending AND contiguous through 0..5', async () => {
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, { box: { x: 120, y: 110, w: 160, h: 190 }, eyesMouth: { x: 150, y: 180, w: 100, h: 120 } });
+    const layers = s.map((k) => k.layer);
+    expect(layers).toEqual([...layers].sort((a, b) => a - b)); // ascending ⇒ contiguous
+    expect(layers[layers.length - 1]).toBe(5);                  // accents land last
+    expect(new Set(layers)).toEqual(new Set([0, 1, 2, 3, 4, 5])); // all six layers present with box + eyesMouth
+  });
+
+  it('caps at the stroke budget AND actually engages thinning (not a vacuous ≤4000)', async () => {
+    // A canvas-sized eyesMouth makes layer 4 (step 5) alone emit 80×100 = 8000 strokes,
+    // so the RAW count exceeds the 4000 cap and the thinning branch MUST run. (A plain
+    // null-faceBox source can stay under 4000, passing ≤4000 without ever thinning — vacuous.)
+    const s = await deriveOilStrokesFromBuffer(await busyPng(128, 160), 400, 500, {
+      box: { x: 0, y: 0, w: 400, h: 500 },
+      eyesMouth: { x: 0, y: 0, w: 400, h: 500 },
+    });
+    expect(s.length).toBeLessThanOrEqual(4000); // cap enforced
+    expect(s.length).toBeGreaterThan(1000);     // sanity: thinning capped but didn't gut the plan
+  });
+});
+```
+
+(The `faceBox=null → no layer 4` fallback is already covered by reconciled test #3 above, so it is not duplicated here.)
+
+- [ ] **Step 2: Run to verify the new tests fail** (and the reconciled prior tests now reflect layers 0–5).
+
+- [ ] **Step 3: Implement** — add layer 4 (only when `eyesMouth`), layer 5 (accents: dark + high-mag), within-layer serpentine locality ordering, and a budget cap. Replace the emit block + return with:
+
+```ts
+  const luminanceAt = (x: number, y: number): number => {
+    const cx = Math.max(0, Math.min(cW - 1, Math.floor((x / dispW) * cW)));
+    const cy = Math.max(0, Math.min(cH - 1, Math.floor((y / dispH) * cH)));
+    const { r, g, b } = Jimp.intToRGBA(small.getPixelColor(cx, cy));
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  };
+
+  emitLayer(0, () => true);
+  emitLayer(1, (x, y) => field.magnitudeAt(x, y, dispW, dispH) > 0.15);
+  emitLayer(2, magGate(0.30, 0.20));
+  emitLayer(3, magGate(0.50, 0.25));
+  if (_faceBox?.eyesMouth) {
+    const em = _faceBox.eyesMouth;
+    emitLayer(4, (x, y) => inRect(x, y, em)); // dedicated, dense, confined to eyes/mouth
+  }
+  // Accents: darkest darks with high local detail; darkened colour, sort last.
+  const accentStart = out.length;
+  emitLayer(5, (x, y) => luminanceAt(x, y) < 0.30 && field.magnitudeAt(x, y, dispW, dispH) > 0.45);
+  for (let i = accentStart; i < out.length; i++) {
+    const { r, g, b } = Jimp.intToRGBA(small.getPixelColor(
+      Math.max(0, Math.min(cW - 1, Math.floor((out[i].x / dispW) * cW))),
+      Math.max(0, Math.min(cH - 1, Math.floor((out[i].y / dispH) * cH))),
+    ));
+    out[i].color = `#${hex2(r * 0.4)}${hex2(g * 0.4)}${hex2(b * 0.4)}`; // bite of dark
+  }
+
+  // Within-layer locality: serpentine sweep (row band, alternating left/right) — keeps layer-ascending.
+  const BAND = 40;
+  const ordered = out
+    .map((s, idx) => ({ s, idx }))
+    .sort((a, b) => {
+      if (a.s.layer !== b.s.layer) return a.s.layer - b.s.layer;
+      const ba = Math.floor(a.s.y / BAND), bb = Math.floor(b.s.y / BAND);
+      if (ba !== bb) return ba - bb;
+      const dir = ba % 2 === 0 ? 1 : -1;
+      if (a.s.x !== b.s.x) return (a.s.x - b.s.x) * dir;
+      return a.idx - b.idx; // stable
+    })
+    .map((e) => e.s);
+
+  // Budget: ~4k cap; thin uniformly per layer if exceeded (logged, never silent).
+  const BUDGET = 4000;
+  if (ordered.length > BUDGET) {
+    const keep = BUDGET / ordered.length;
+    const thinned = ordered.filter((_, i) => rnd(i) < keep);
+    console.warn(`[oilStrokes] budget thinning: ${ordered.length} → ${thinned.length} (cap ${BUDGET})`);
+    return thinned;
+  }
+  return ordered;
+```
+
+> Note: thinning is an order-preserving `filter`, so layer-ascending CONTIGUITY is preserved (the kept subset is still sorted). It is deterministic (`rnd(i)`). The only edge it doesn't guarantee is keeping the very last accent if that index is thinned — cosmetic, never hit at M2 fixture sizes (the budget test's 256×320 source does exceed the cap and exercises the warn path, but layers retain hundreds of strokes each, so none empties and the last surviving stroke is still a layer-5 accent). M4 revisits thinning.
+
+- [ ] **Step 4: Run to verify pass.** **Step 5: Full suite + tsc.** **Step 6: Commit** — `git commit -m "feat(oil): eyes/mouth + accent layers, serpentine locality, stroke budget"`
+
+---
+
+#### Task 11: oil generation service (`oilGenerationService.ts`)
+
+**Files:**
+- Create: `lib/engine1/oilGenerationService.ts`
+- Test: `lib/engine1/oilGenerationService.test.ts`
+
+**Interfaces:**
+- Consumes: `loadImageBuffer` (`./imageSource`), `deriveLineArtFromBuffer` (`./derive`), `traceToStrokePaths` (`./lineart`), `deriveOilStrokesFromBuffer` (`./oilStrokes`), `PortraitEngine`/`PortraitInput` (`./portraitEngine`), `OilDrawingPlan` (`@/lib/drawing/oilTypes`).
+- Produces: `generateOilDrawingPlan(input: PortraitInput, engine: PortraitEngine): Promise<OilDrawingPlan>`. (M3 will pass a real `faceBox` here; M2 passes `null`.)
+
+- [ ] **Step 1: Write the failing test** (mirrors `generationService.test.ts`)
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { generateOilDrawingPlan } from './oilGenerationService';
+import { generateDrawingPlan } from './generationService'; // v1 must remain intact
+import type { PortraitEngine } from './portraitEngine';
+
+const SAMPLE_PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAwklEQVR4Ae3BgWkEQQDEMO9w/be8SQ3xBR7e0rm/yJ+NKCPKiDKijCgjyogyoowoI8qIMqKMKCPKg3DO4ZPde/lvI8qIMqKMKCPKiDKijCgjyogyoowoI8qIMqKMKCPKiDKijCgjyogyoowoI8qIMqKMKCPKg3Dv5duNKCPKiDKijCgjyogyoowoDy875/DJ7r28aUQZUUaUEWVEGVFGlBFlRHl42b2XbzKijCgjyogyoowoI8qIMqKMKCPKiDKijCg/xkUQnmgvYDQAAAAASUVORK5CYII=';
+const SAMPLE_DATA_URL = 'data:image/png;base64,' + SAMPLE_PNG_B64;
+const fakeEngine: PortraitEngine = { async generate() { return { colorImage: SAMPLE_DATA_URL, width: 80, height: 80 }; } };
+
+describe('generateOilDrawingPlan', () => {
+  it('assembles a valid v2 OilDrawingPlan from engine output', async () => {
+    const plan = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine);
+    expect(plan.width).toBe(80);
+    expect(plan.height).toBe(80);
+    expect(plan.colorImage).toBe(SAMPLE_DATA_URL);
+    expect(Array.isArray(plan.strokePaths)).toBe(true);
+    expect(plan.strokePaths.length).toBeGreaterThan(0);
+    expect(plan.oilStrokes.length).toBeGreaterThan(0);
+  });
+
+  it('orders oilStrokes by layer ascending', async () => {
+    const { oilStrokes } = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine);
+    for (let i = 1; i < oilStrokes.length; i++) expect(oilStrokes[i].layer).toBeGreaterThanOrEqual(oilStrokes[i - 1].layer);
+  });
+
+  it('uses v2 timing with photoGlaze 0 and carries NO shading field', async () => {
+    const plan = await generateOilDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine);
+    expect(plan.timing.photoGlaze).toBe(0);
+    expect(plan.timing.blockInMs).toBeGreaterThan(0);
+    expect(plan.timing.refineMs).toBeGreaterThan(0);
+    expect('shadingLayer' in plan).toBe(false);
+  });
+
+  it('leaves the v1 generateDrawingPlan importable/working (untouched)', async () => {
+    const v1 = await generateDrawingPlan({ selfie: 'x', team: 'Brazil' }, fakeEngine);
+    expect(v1.brushStrokes.length).toBeGreaterThan(0); // v1 still produces its own shape
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails** (module missing).
+
+- [ ] **Step 3: Implement**
+
+```ts
+import type { OilDrawingPlan } from '@/lib/drawing/oilTypes';
+import { traceToStrokePaths } from './lineart';
+import { deriveLineArtFromBuffer } from './derive';
+import { deriveOilStrokesFromBuffer } from './oilStrokes';
+import { loadImageBuffer } from './imageSource';
+import type { PortraitEngine, PortraitInput } from './portraitEngine';
+
+// v2 timing (spec §4): ~22s shaped curve. Tuned further in M4.
+export const OIL_TIMING = { outlineMs: 3000, blockInMs: 5000, refineMs: 11000, accentMs: 3000, photoGlaze: 0 };
+
+export async function generateOilDrawingPlan(
+  input: PortraitInput,
+  engine: PortraitEngine,
+): Promise<OilDrawingPlan> {
+  const out = await engine.generate(input);
+  const buf = await loadImageBuffer(out.colorImage);
+  const lineArt = await deriveLineArtFromBuffer(buf);
+  const strokePaths = await traceToStrokePaths(lineArt);
+  // M2: no face detector yet → faceBox null (pure detail-driven). M3 wires the real detector here.
+  const oilStrokes = await deriveOilStrokesFromBuffer(buf, out.width, out.height, null);
+  return {
+    width: out.width,
+    height: out.height,
+    strokePaths,
+    oilStrokes,
+    colorImage: out.colorImage,
+    timing: { ...OIL_TIMING },
+  };
+}
+```
+
+- [ ] **Step 4: Run to verify pass.** **Step 5: Full suite + tsc.** **Step 6: Commit** — `git commit -m "feat(oil): generateOilDrawingPlan assembles the v2 plan (no shading, photoGlaze 0)"`
+
+**M2 EXIT CRITERIA:** `generateOilDrawingPlan` produces a valid layer-ordered `OilDrawingPlan` from a real image buffer with zero AI cost on the fixture path; the orientation field + 6 layers are unit-tested and deterministic; v1 generation is untouched; suite + tsc green. (Likeness is still detail-only — the dedicated eyes/mouth pass activates once M3 supplies a real `faceBox`.)
 
 ### M3 — face targeting
 
