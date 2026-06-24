@@ -8,6 +8,7 @@ beforeAll(() => {
   SVGElement.prototype.getTotalLength = () => 100;
   // @ts-expect-error test stub
   SVGElement.prototype.getPointAtLength = () => ({ x: 0, y: 0 });
+  HTMLCanvasElement.prototype.getContext = () => null;
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number);
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
 });

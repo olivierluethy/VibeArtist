@@ -23,6 +23,7 @@ export default function OilPerformance({ plan, onDone }: Props) {
   const [, force] = useState(0);
 
   useEffect(() => {
+    doneRef.current = false;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d') ?? null;
     const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
