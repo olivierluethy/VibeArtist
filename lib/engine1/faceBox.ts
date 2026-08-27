@@ -3,7 +3,7 @@ import type { FaceBox, Rect } from './oilStrokes';
 /** A raw face detection in NORMALISED [0,1] coords (the model's output space). */
 export interface RawDetection {
   box: { x: number; y: number; w: number; h: number };
-  keypoints: { x: number; y: number }[]; // order: 0 left-eye, 1 right-eye, 2 nose, 3 mouth, 4/5 cheeks
+  keypoints: { x: number; y: number }[]; // order: 0 right-eye, 1 left-eye, 2 nose, 3 mouth, 4/5 ears
 }
 
 const EM_PAD = 0.25; // pad the eyes/mouth span by 25% of its extent
@@ -25,10 +25,14 @@ export function toFaceBox(raw: RawDetection, dispW: number, dispH: number): Face
 
 export type FaceModelRunner = (buf: Buffer) => Promise<RawDetection | null>;
 
-/** Real BlazeFace inference is wired in the network-gated task (M3.4). Until then this throws,
- *  so detectFaceBox falls back to null and derivation stays pure detail-driven. NO onnxruntime import here. */
-const defaultRunner: FaceModelRunner = async () => {
-  throw new Error('faceBox: BlazeFace runner not wired (M3.4 — needs onnxruntime-node@1.24.3 + a clean-license model)');
+/** Default runner: the real BlazeFace detector (M3.4), imported LAZILY so onnxruntime-node never
+ *  enters this module's static graph — the offline/test paths that don't invoke it stay pure, and
+ *  `detectFaceBox`'s try/catch still turns any failure (missing model, decode throw, junk buffer,
+ *  no face) into `null`. Set `PORTRAIT_FACE_DETECT=0` to force the pure detail-driven path. */
+const defaultRunner: FaceModelRunner = async (buf) => {
+  if (process.env.PORTRAIT_FACE_DETECT === '0') return null;
+  const { blazeFaceRunner } = await import('./blazeface');
+  return blazeFaceRunner(buf);
 };
 
 /** Server-side face detection. NON-BLOCKING: any failure (missing model, throw, no face) → null. */
